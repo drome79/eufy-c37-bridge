@@ -6,6 +6,40 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 |---|---|---|
 | [Eufy C37 Bridge](eufy_c37_bridge/) | 0.5.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
+## Voraussetzungen
+
+**Erforderlich**
+
+| Was | Details |
+|---|---|
+| Home Assistant **OS** oder **Supervised** | Add-ons gibt es nur dort. Mit Home Assistant Container oder Core funktioniert das Add-on nicht. |
+| Architektur `amd64` oder `aarch64` | z. B. Mini-PC/NUC oder Raspberry Pi 4/5 mit 64-Bit-HAOS |
+| Eufy-Konto mit mindestens einer **eufyCam C37** (T814X / T814XS) | Die Kamera muss in der Eufy-App eingerichtet sein. Empfohlen: ein eigenes Konto nur für Home Assistant, in der Eufy-App als Gast freigegeben. |
+| Internetzugang des Home-Assistant-Servers | für die Anmeldung bei Eufy und für den Bau des Add-ons (lädt Node.js-Pakete und das Basis-Image) |
+| Kameras im selben Netz erreichbar | Livebilder kommen per P2P (UDP); das Add-on läuft deshalb im Host-Netzwerk |
+
+**Wird automatisch mitinstalliert** – nichts davon muss von Hand eingerichtet werden:
+
+| Komponente | Version | Zweck |
+|---|---|---|
+| [`@mega-yfue/eufy-sdk`](https://github.com/mega-yfue/eufy-sdk) | 0.5.0 (fest) | Anmeldung bei Eufy, Geräte, Bilder, Livevideo |
+| [`mqtt`](https://www.npmjs.com/package/mqtt) | ^5.16 | Verbindung zum MQTT-Broker |
+| Node.js | 24 (Basis-Image `node:24-bookworm-slim`) | Laufzeit, das SDK braucht ≥ 24.5 |
+| ffmpeg | aus Debian bookworm | Livevideo als MPEG-TS, Umwandlung H.265 → H.264 |
+
+Das Add-on wird beim Installieren auf dem eigenen Server gebaut. Das dauert einige Minuten und braucht
+rund 1 GB freien Speicher.
+
+**Optional**
+
+| Was | Wofür |
+|---|---|
+| Add-on **Mosquitto broker** + Integration **MQTT** | Sensoren und Knöpfe pro Kamera (Bewegung, Person, Akku, „Live-Bild holen“). Ohne MQTT gibt es nur Bilder und Livevideo. |
+| Integration **Generic Camera** (in Home Assistant enthalten) | Um die Kameras als `camera.*`-Entitäten mit Bild und Livevideo anzuzeigen |
+
+**Nicht nötig:** das Add-on `eufy-security-ws` und die HACS-Integration „Eufy Security“. Die Bridge arbeitet
+unabhängig davon und kann parallel dazu laufen.
+
 ## Installation
 
 1. In Home Assistant: **Einstellungen → Add-ons → Add-on-Store**.
