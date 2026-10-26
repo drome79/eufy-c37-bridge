@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.4.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.4.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Installation
 
@@ -83,7 +83,9 @@ Vollbildansicht `camera_view: live` – sonst streamen beim Öffnen des Dashboar
 
 ### Technik
 
-- Basis-Image `node:24-bookworm-slim` mit `ffmpeg`, Node.js ≥ 24.5
+- Architekturen: `amd64` (getestet) und `aarch64`, z. B. Raspberry Pi 4/5 mit 64-Bit-HAOS (nicht auf echter Hardware getestet)
+- Basis-Image `node:24-bookworm-slim` mit `ffmpeg`, Node.js ≥ 24.5. Auf schwächeren Geräten kann die
+  H.265→H.264-Umwandlung beim Livevideo knapp werden; dann `transcode_height` auf `720` senken.
 - Netzwerk im Host-Modus (die P2P-Verbindung zu den Kameras braucht UDP im Heimnetz)
 - MQTT-Zugang über den Supervisor-Dienst (`services: mqtt:want`), kein eigenes MQTT-Passwort nötig
 
