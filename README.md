@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.4.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.5.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Installation
 
@@ -41,7 +41,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 |---|---|---|
 | `email`, `password` | – | Eufy-Konto. Empfohlen: ein eigenes Konto, in der Eufy-App als Gast freigegeben. |
 | `country` | `DE` | Land des Eufy-Kontos |
-| `cameras` | Einfahrt, Hintertür, Hinterhof | Gerätenamen wie in der Eufy-App |
+| `cameras` | leer | **Leer lassen = automatische Erkennung** aller C37 (Modell T814…) im Konto. Optional Gerätenamen wie in der Eufy-App, um nur bestimmte Kameras einzubinden. Wird keiner der Namen im Konto gefunden, erkennt die Bridge ebenfalls automatisch. |
 | `refresh_minutes` | `30` | Alle wie viele Minuten ein frisches Bild geholt wird (`0` = nie) |
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |
 | `live_max_minutes` | `5` | Längster Livestream am Stück (Akku) |
@@ -51,11 +51,12 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 
 ### Adressen
 
-Der Kameraname wird klein geschrieben, Umlaute werden ersetzt (`Hintertür` → `hintertuer`).
+Der Kameraname wird klein geschrieben, Umlaute werden ersetzt (`Hintertür` → `hintertuer`). Welche Namen
+gelten, zeigen die Statusseite und das Protokoll des Add-ons nach dem Start.
 
 | Adresse | Inhalt |
 |---|---|
-| `http://<HA-IP>:8099/` | Status als JSON (Anmeldung, MQTT, je Kamera Bildalter, Akku, Livestream, Fähigkeiten) |
+| `http://<HA-IP>:8099/` | Status als JSON (Anmeldung, MQTT, alle Geräte im Konto mit Modell, je Kamera Bildalter, Akku, Livestream, Fähigkeiten) |
 | `http://<HA-IP>:8099/snapshot/<name>.jpg` | letztes Bild |
 | `http://<HA-IP>:8099/refresh/<name>` | frisches Bild erzwingen (weckt die Kamera) |
 | `http://<HA-IP>:8099/live/<name>.ts` | Livevideo (MPEG-TS) |

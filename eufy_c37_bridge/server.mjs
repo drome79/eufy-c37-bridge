@@ -34,15 +34,19 @@ const slugify = (s) =>
 const withTimeout = (p, ms, what) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: keine Antwort nach ${ms / 1000} s`)), ms))]);
 
-const state = { login: "pending", loginInfo: "", mqtt: "aus", cameras: {} };
+const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [] };
 
-// Kameras laut Optionen; Bilder ueber Neustarts hinweg in DATA behalten
-for (const name of opts.cameras || []) {
-  const slug = slugify(name);
+// C37-Familie (eufyCam C37 = T814X / T814XS)
+const C37_MODEL = /^T814/i;
+
+// Kamera anlegen; Bilder ueber Neustarts hinweg in DATA behalten
+function addCamera(name) {
+  let slug = slugify(name) || "kamera";
+  for (let i = 2; state.cameras[slug]; i++) slug = `${slugify(name)}_${i}`;
   const file = path.join(DATA, `snapshot_${slug}.jpg`);
   const ts = fs.existsSync(file) ? fs.statSync(file).mtimeMs : 0;
-  state.cameras[slug] = {
-    name, slug, sn: null, file,
+  const cam = {
+    name, slug, sn: null, model: null, file,
     jpeg: ts ? fs.readFileSync(file) : null,
     ts,
     source: ts ? "cache" : null,
@@ -50,7 +54,10 @@ for (const name of opts.cameras || []) {
     lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null, live: null,
     caps: [], ptz: false,
   };
+  state.cameras[slug] = cam;
+  return cam;
 }
+for (const name of opts.cameras || []) if (String(name).trim()) addCamera(String(name).trim());
 
 // --- MQTT ---------------------------------------------------------------------------------------
 
@@ -88,6 +95,14 @@ function publishDiscovery(cam) {
   if (cam.battery != null) pub(`${BASE}/${cam.slug}/battery`, cam.battery);
 }
 
+// Entitaeten einer Kamera, die es im Konto nicht gibt, wieder aus Home Assistant entfernen
+// (leere, gespeicherte Discovery-Nachricht loescht die Entitaet)
+function unpublishDiscovery(slug) {
+  const keys = [["binary_sensor", "motion"], ["binary_sensor", "person"], ["sensor", "battery"], ["sensor", "image_ts"],
+    ["sensor", "last_event"], ["button", "refresh"], ["button", "ptz_left"], ["button", "ptz_right"], ["button", "ptz_up"], ["button", "ptz_down"]];
+  for (const [component, key] of keys) pub(`homeassistant/${component}/${BASE}_${slug}_${key}/config`, "");
+}
+
 // Schwenken/Neigen: nur fuer Kameras, die laut SDK "ptz" koennen
 const PTZ_DIRS = { left: "Links", right: "Rechts", up: "Hoch", down: "Runter" };
 function publishPtz(cam) {
@@ -121,7 +136,9 @@ async function startMqtt() {
     state.mqtt = "verbunden";
     log("MQTT verbunden");
     pub(`${BASE}/status`, "online");
-    for (const cam of Object.values(state.cameras)) { publishDiscovery(cam); publishPtz(cam); }
+    // nur Kameras melden, die im Konto gefunden wurden (sonst entstehen Geister-Entitaeten)
+    for (const cam of Object.values(state.cameras)) if (cam.sn) { publishDiscovery(cam); publishPtz(cam); }
+    for (const slug of state.removed) unpublishDiscovery(slug);
     mq.subscribe(`${BASE}/+/refresh`);
     mq.subscribe(`${BASE}/+/ptz`);
   });
@@ -176,24 +193,56 @@ async function login() {
   state.loginInfo = "";
   log("Anmeldung ok");
   const list = await eufy.getDevices();
+
+  // Alle Geraete des Kontos mit Kamera ermitteln (fuer Status/Protokoll und die automatische Erkennung)
+  const cams = [];
+  for (const d of list) {
+    let hasCam = false;
+    try { hasCam = Boolean((await eufy.getDevice(d.sn)).has?.("camera")); } catch {}
+    state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? "") });
+    if (hasCam) cams.push(d);
+  }
+  log(`Geraete im Konto: ${state.accountDevices.map((d) => `${d.name} (${d.model}${d.camera ? ", Kamera" : ""})`).join("; ")}`);
+
+  // Konfigurierte Namen zuordnen. Namen koennen doppelt vorkommen (z. B. Tuersensor und Kamera "Hintertür"),
+  // deshalb nur Geraete mit Kamera.
+  const matched = [];
   for (const cam of Object.values(state.cameras)) {
-    // Namen koennen doppelt vorkommen (z. B. Tuersensor und Kamera "Hintertür") -> nur Geraete mit Kamera nehmen
-    let rec = null;
-    for (const d of list.filter((d) => (d.name ?? "").toLowerCase() === cam.name.toLowerCase())) {
-      const dev = await eufy.getDevice(d.sn);
-      if (dev.has?.("camera")) { rec = d; break; }
+    const rec = cams.find((d) => (d.name ?? "").toLowerCase() === cam.name.toLowerCase() && !matched.includes(d));
+    if (rec) { matched.push(rec); await bindCamera(cam, rec); }
+  }
+
+  // Automatische Erkennung: wenn keine Namen eingetragen sind oder keiner davon im Konto existiert,
+  // werden alle C37 des Kontos uebernommen.
+  if (matched.length === 0) {
+    for (const cam of Object.values(state.cameras)) {
+      log(`${cam.name}: nicht im Konto gefunden, wird ignoriert`);
+      unpublishDiscovery(cam.slug);
+      state.removed.push(cam.slug);
+      delete state.cameras[cam.slug];
     }
-    if (rec) {
-      cam.sn = rec.sn;
-      const dev = await eufy.getDevice(rec.sn);
-      cam.caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
-      cam.ptz = cam.caps.includes("ptz") && typeof dev.ptz?.()?.rotate === "function";
-      log(`${cam.name}: gefunden (${rec.model}), Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
-      if (cam.ptz) publishPtz(cam);
+    const auto = cams.filter((d) => C37_MODEL.test(d.model ?? ""));
+    state.mode = "automatisch";
+    log(auto.length ? `Automatische Erkennung: ${auto.map((d) => d.name).join(", ")}` : "Automatische Erkennung: keine C37 im Konto gefunden");
+    for (const rec of auto) await bindCamera(addCamera(rec.name), rec);
+  } else {
+    state.mode = "Namen aus der Konfiguration";
+    for (const cam of Object.values(state.cameras)) {
+      if (!cam.sn) { cam.lastError = "Geraet nicht im Konto gefunden"; log(`${cam.name}: nicht im Konto gefunden`); }
     }
-    else { cam.lastError = "Geraet nicht im Konto gefunden"; log(`${cam.name}: nicht im Konto gefunden`); }
   }
   return true;
+}
+
+async function bindCamera(cam, rec) {
+  cam.sn = rec.sn;
+  cam.model = rec.model;
+  const dev = await eufy.getDevice(rec.sn);
+  cam.caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
+  cam.ptz = cam.caps.includes("ptz") && typeof dev.ptz?.()?.rotate === "function";
+  log(`${cam.name}: verbunden (${rec.model}), Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
+  publishDiscovery(cam);
+  if (cam.ptz) publishPtz(cam);
 }
 
 async function readBattery(cam) {
@@ -395,9 +444,10 @@ const server = http.createServer(async (req, res) => {
   // Status
   res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({
-    login: state.login, info: state.loginInfo, mqtt: state.mqtt,
+    login: state.login, info: state.loginInfo, mqtt: state.mqtt, camera_selection: state.mode,
+    account_devices: state.accountDevices,
     cameras: Object.values(state.cameras).map((c) => ({
-      name: c.name, url: `/snapshot/${c.slug}.jpg`, connected: Boolean(c.sn),
+      name: c.name, model: c.model, url: `/snapshot/${c.slug}.jpg`, connected: Boolean(c.sn),
       image_age_s: c.jpeg ? Math.round((Date.now() - c.ts) / 1000) : null, source: c.source,
       battery: c.battery, busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
       live: c.live ? { viewers: c.live.clients.size, codec: c.live.codec, running_s: Math.round((Date.now() - c.live.startedAt) / 1000) } : null,

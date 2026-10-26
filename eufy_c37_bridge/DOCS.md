@@ -7,7 +7,9 @@ In Home Assistant bindet man jede Kamera als **Generic Camera** mit der Bild-Adr
 ## Optionen
 
 - `email`, `password`: Eufy-Konto. Empfohlen ist ein eigenes Konto, das in der Eufy-App als Gast freigegeben ist.
-- `cameras`: Gerätenamen wie in der Eufy-App.
+- `cameras`: leer lassen, dann werden alle C37 des Kontos automatisch erkannt. Optional Gerätenamen wie in der
+  Eufy-App, um nur bestimmte Kameras zu nutzen. Passt keiner der Namen, wird ebenfalls automatisch erkannt.
+  Alle Geräte des Kontos stehen nach dem Start im Protokoll und auf der Statusseite.
 - `refresh_minutes`: Alle wie viele Minuten ein frisches Live-Bild geholt wird (0 = nie, nur bei Ereignissen).
 - `min_live_interval_minutes`: Mindestabstand zwischen zwei Live-Bildern pro Kamera (Akku).
 - `port`: HTTP-Port (Standard 8099).
