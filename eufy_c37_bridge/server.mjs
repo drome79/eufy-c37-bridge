@@ -2,9 +2,12 @@
 // Home Assistant als JPEG-Adressen bereit (/snapshot/<name>.jpg). Bilder werden gepuffert,
 // damit die Akku-Kameras nicht bei jedem Abruf geweckt werden.
 // Ab 0.2.0 zusaetzlich per MQTT (Discovery): Bewegung, Person, Akku, Zeit des letzten Bildes, Knopf "Live-Bild holen".
+// Ab 0.3.0 Livevideo auf Abruf: /live/<name>.ts liefert MPEG-TS (H.264/H.265 unveraendert, ohne Ton),
+// solange jemand zuschaut; danach wird die Kamera wieder schlafen gelassen.
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import { spawn } from "node:child_process";
 import mqtt from "mqtt";
 import { EufyMega, FileSessionStore } from "@mega-yfue/eufy-sdk";
 
@@ -16,6 +19,9 @@ const PORT = Number(opts.port || 8099);
 const REFRESH_MIN = Number(opts.refresh_minutes ?? 30);
 const MIN_LIVE_MIN = Number(opts.min_live_interval_minutes ?? 10);
 const LIVE_TIMEOUT_MS = 75_000;
+const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Livestream am Stueck
+const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
+const LIVE_START_TIMEOUT_MS = 45_000;
 const BASE = "eufy_c37";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -41,7 +47,7 @@ for (const name of opts.cameras || []) {
     ts,
     source: ts ? "cache" : null,
     // ein frisches Bild aus dem Cache zaehlt als letzter Live-Versuch -> nach Neustart nicht sofort wecken
-    lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null,
+    lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null, live: null,
   };
 }
 
@@ -197,6 +203,91 @@ async function liveSnapshot(cam, force = false) {
   return cam.busy;
 }
 
+// --- Livevideo ----------------------------------------------------------------------------------
+// Ein Livestream pro Kamera, geteilt von allen Zuschauern. Das SDK liefert Annex-B-Frames, ffmpeg packt
+// sie ohne Neukodierung in MPEG-TS. Ohne Zuschauer wird nach LIVE_IDLE_MS gestoppt, spaetestens nach LIVE_MAX_MIN.
+
+function stopLive(cam, reason) {
+  const s = cam.live;
+  if (!s) return;
+  cam.live = null;
+  clearTimeout(s.idleTimer);
+  clearTimeout(s.maxTimer);
+  try { s.consumer?.stop(); } catch {}
+  try { s.ff?.stdin.end(); s.ff?.kill("SIGKILL"); } catch {}
+  for (const res of s.clients) { try { res.end(); } catch {} }
+  s.clients.clear();
+  log(`${cam.name}: Livestream beendet (${reason})`);
+}
+
+function startFfmpeg(cam, s, codec) {
+  const args = [
+    "-hide_banner", "-loglevel", "error",
+    "-fflags", "+genpts+nobuffer", "-use_wallclock_as_timestamps", "1",
+    "-f", codec === "h265" ? "hevc" : "h264", "-i", "pipe:0",
+    "-c:v", "copy", "-an",
+    "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
+  ];
+  const ff = spawn(opts.ffmpeg_path || "ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
+  ff.stdin.on("error", () => {});
+  ff.stdout.on("data", (chunk) => { for (const res of s.clients) res.write(chunk); });
+  ff.stderr.on("data", (d) => log(`${cam.name} [ffmpeg] ${String(d).trim().slice(0, 200)}`));
+  ff.on("exit", () => { if (cam.live === s) stopLive(cam, "ffmpeg beendet"); });
+  s.ff = ff;
+  s.codec = codec;
+}
+
+async function ensureLive(cam) {
+  if (cam.live) return cam.live;
+  const s = { clients: new Set(), consumer: null, ff: null, codec: null, idleTimer: null, maxTimer: null, startedAt: Date.now() };
+  cam.live = s;
+  try {
+    const dev = await eufy.getDevice(cam.sn);
+    const liveFn = dev.camera?.()?.live;
+    if (typeof liveFn !== "function") throw new Error("Livevideo wird nicht angeboten");
+    const consumer = await liveFn({ powered: "battery" });
+    s.consumer = consumer;
+    const firstFrame = new Promise((resolve, reject) => {
+      consumer.on("video", (frame) => {
+        if (cam.live !== s) return;
+        if (!s.ff) startFfmpeg(cam, s, frame.codec);
+        else if (frame.codec !== s.codec) { log(`${cam.name}: Codec-Wechsel ${s.codec} -> ${frame.codec}`); }
+        try { s.ff.stdin.write(frame.data); } catch {}
+        resolve();
+      });
+      consumer.on("error", (e) => { reject(e); if (cam.live === s) stopLive(cam, `Fehler: ${String(e?.message ?? e).slice(0, 120)}`); });
+      consumer.on("stop", () => { if (cam.live === s) stopLive(cam, "Kamera hat gestoppt"); });
+    });
+    consumer.on("budget", (notice) => {
+      // Akku-Budget: verlaengern, solange jemand zuschaut und die Hoechstdauer nicht erreicht ist
+      if (s.clients.size > 0 && Date.now() - s.startedAt < LIVE_MAX_MIN * 60_000) notice.extend();
+    });
+    await withTimeout(firstFrame, LIVE_START_TIMEOUT_MS, "Livestream-Start");
+    s.maxTimer = setTimeout(() => stopLive(cam, `Hoechstdauer ${LIVE_MAX_MIN} min erreicht`), LIVE_MAX_MIN * 60_000);
+    log(`${cam.name}: Livestream laeuft (${s.codec})`);
+    return s;
+  } catch (e) {
+    stopLive(cam, `Start fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`);
+    throw e;
+  }
+}
+
+async function serveLive(cam, req, res) {
+  let s;
+  try { s = await ensureLive(cam); }
+  catch (e) { res.writeHead(503); return res.end(`Livestream nicht verfuegbar: ${String(e?.message ?? e).slice(0, 200)}`); }
+  clearTimeout(s.idleTimer);
+  res.writeHead(200, { "content-type": "video/mp2t", "cache-control": "no-store", connection: "close" });
+  s.clients.add(res);
+  log(`${cam.name}: Zuschauer verbunden (${s.clients.size})`);
+  req.on("close", () => {
+    s.clients.delete(res);
+    if (cam.live === s && s.clients.size === 0) {
+      s.idleTimer = setTimeout(() => { if (cam.live === s && s.clients.size === 0) stopLive(cam, "keine Zuschauer"); }, LIVE_IDLE_MS);
+    }
+  });
+}
+
 // Ereignisse (Bewegung, Person ...): an MQTT melden und das Ereignisbild aus dem Push uebernehmen,
 // ohne die Kamera zu wecken
 const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
@@ -223,6 +314,13 @@ eufy.on("event", async (e) => {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
+  const lm = url.pathname.match(/^\/live\/([a-z0-9_]+)(?:\.ts)?$/);
+  if (lm) {
+    const cam = state.cameras[lm[1]];
+    if (!cam) { res.writeHead(404); return res.end("unbekannte Kamera"); }
+    if (!cam.sn) { res.writeHead(503); return res.end("Kamera nicht verbunden"); }
+    return serveLive(cam, req, res);
+  }
   const m = url.pathname.match(/^\/(snapshot|refresh)\/([a-z0-9_]+)(?:\.jpg)?$/);
   if (m) {
     const cam = state.cameras[m[2]];
@@ -252,6 +350,8 @@ const server = http.createServer(async (req, res) => {
       name: c.name, url: `/snapshot/${c.slug}.jpg`, connected: Boolean(c.sn),
       image_age_s: c.jpeg ? Math.round((Date.now() - c.ts) / 1000) : null, source: c.source,
       battery: c.battery, busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
+      live: c.live ? { viewers: c.live.clients.size, codec: c.live.codec, running_s: Math.round((Date.now() - c.live.startedAt) / 1000) } : null,
+      live_url: `/live/${c.slug}.ts`,
     })),
   }, null, 2));
 });
@@ -279,6 +379,7 @@ try {
 }
 
 const stop = async () => {
+  for (const cam of Object.values(state.cameras)) stopLive(cam, "Add-on stoppt");
   try { pub(`${BASE}/status`, "offline"); mq?.end(true); } catch {}
   try { await eufy.disconnect?.(); } catch {}
   process.exit(0);

@@ -22,6 +22,12 @@ In Home Assistant bindet man jede Kamera als **Generic Camera** mit der Bild-Adr
 
 Bei einem Bewegungsereignis übernimmt die Bridge das Ereignisbild aus dem Push, ohne die Kamera zu wecken.
 
+## Livevideo (ab 0.3.0)
+
+`http://<HA-IP>:8099/live/<name>.ts` liefert den Livestream als MPEG-TS (Video unverändert, ohne Ton).
+In der Generic Camera als **Stream-Quelle** eintragen. Die Kamera streamt nur, solange jemand zuschaut,
+und hört 20 s nach dem letzten Zuschauer auf, spätestens nach `live_max_minutes` (Standard 5, Akku).
+
 ## MQTT (ab 0.2.0)
 
 Ist das Mosquitto-Add-on installiert, verbindet sich die Bridge automatisch damit und legt pro Kamera
