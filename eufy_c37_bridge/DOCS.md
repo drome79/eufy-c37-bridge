@@ -21,3 +21,9 @@ In Home Assistant bindet man jede Kamera als **Generic Camera** mit der Bild-Adr
 - `http://<HA-IP>:8099/refresh/<name>` — frisches Live-Bild erzwingen (weckt die Kamera)
 
 Bei einem Bewegungsereignis übernimmt die Bridge das Ereignisbild aus dem Push, ohne die Kamera zu wecken.
+
+## MQTT (ab 0.2.0)
+
+Ist das Mosquitto-Add-on installiert, verbindet sich die Bridge automatisch damit und legt pro Kamera
+ein Gerät „C37 <Name>“ an mit: Bewegung, Person (je 30 s an), Akku, Letztes Bild, Letztes Ereignis und
+dem Knopf „Live-Bild holen“. Ohne Mosquitto läuft die Bridge weiter, nur ohne diese Entitäten.

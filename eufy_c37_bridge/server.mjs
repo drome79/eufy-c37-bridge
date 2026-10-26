@@ -1,9 +1,11 @@
 // Eufy C37 Bridge: holt Bilder der eufyCam C37 ueber @mega-yfue/eufy-sdk und stellt sie
 // Home Assistant als JPEG-Adressen bereit (/snapshot/<name>.jpg). Bilder werden gepuffert,
 // damit die Akku-Kameras nicht bei jedem Abruf geweckt werden.
+// Ab 0.2.0 zusaetzlich per MQTT (Discovery): Bewegung, Person, Akku, Zeit des letzten Bildes, Knopf "Live-Bild holen".
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import mqtt from "mqtt";
 import { EufyMega, FileSessionStore } from "@mega-yfue/eufy-sdk";
 
 const DATA = process.env.DATA_DIR || "/data";
@@ -14,6 +16,7 @@ const PORT = Number(opts.port || 8099);
 const REFRESH_MIN = Number(opts.refresh_minutes ?? 30);
 const MIN_LIVE_MIN = Number(opts.min_live_interval_minutes ?? 10);
 const LIVE_TIMEOUT_MS = 75_000;
+const BASE = "eufy_c37";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -25,20 +28,84 @@ const slugify = (s) =>
 const withTimeout = (p, ms, what) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: keine Antwort nach ${ms / 1000} s`)), ms))]);
 
-const state = { login: "pending", loginInfo: "", cameras: {} };
+const state = { login: "pending", loginInfo: "", mqtt: "aus", cameras: {} };
 
 // Kameras laut Optionen; Bilder ueber Neustarts hinweg in DATA behalten
 for (const name of opts.cameras || []) {
   const slug = slugify(name);
   const file = path.join(DATA, `snapshot_${slug}.jpg`);
+  const ts = fs.existsSync(file) ? fs.statSync(file).mtimeMs : 0;
   state.cameras[slug] = {
     name, slug, sn: null, file,
-    jpeg: fs.existsSync(file) ? fs.readFileSync(file) : null,
-    ts: fs.existsSync(file) ? fs.statSync(file).mtimeMs : 0,
-    source: fs.existsSync(file) ? "cache" : null,
-    lastLiveTry: 0, busy: null, lastError: null, lastEvent: null,
+    jpeg: ts ? fs.readFileSync(file) : null,
+    ts,
+    source: ts ? "cache" : null,
+    // ein frisches Bild aus dem Cache zaehlt als letzter Live-Versuch -> nach Neustart nicht sofort wecken
+    lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null,
   };
 }
+
+// --- MQTT ---------------------------------------------------------------------------------------
+
+let mq = null;
+const pub = (topic, payload, retain = true) => { if (mq?.connected) mq.publish(topic, String(payload), { retain }); };
+
+async function mqttConfig() {
+  const tok = process.env.SUPERVISOR_TOKEN;
+  if (!tok) return null;
+  try {
+    const r = await fetch("http://supervisor/services/mqtt", { headers: { Authorization: `Bearer ${tok}` } });
+    if (!r.ok) return null;
+    return (await r.json()).data ?? null;
+  } catch { return null; }
+}
+
+function publishDiscovery(cam) {
+  const dev = {
+    identifiers: [`${BASE}_${cam.slug}`],
+    name: `C37 ${cam.name}`,
+    manufacturer: "Eufy",
+    model: "eufyCam C37",
+  };
+  const common = { availability_topic: `${BASE}/status`, device: dev };
+  const cfg = (component, key, body) =>
+    pub(`homeassistant/${component}/${BASE}_${cam.slug}_${key}/config`,
+      JSON.stringify({ ...common, unique_id: `${BASE}_${cam.slug}_${key}`, object_id: `c37_${cam.slug}_${key}`, ...body }));
+  cfg("binary_sensor", "motion", { name: "Bewegung", device_class: "motion", state_topic: `${BASE}/${cam.slug}/motion`, off_delay: 30 });
+  cfg("binary_sensor", "person", { name: "Person", device_class: "occupancy", state_topic: `${BASE}/${cam.slug}/person`, off_delay: 30 });
+  cfg("sensor", "battery", { name: "Akku", device_class: "battery", unit_of_measurement: "%", state_class: "measurement", state_topic: `${BASE}/${cam.slug}/battery`, entity_category: "diagnostic" });
+  cfg("sensor", "image_ts", { name: "Letztes Bild", device_class: "timestamp", state_topic: `${BASE}/${cam.slug}/image_ts` });
+  cfg("sensor", "last_event", { name: "Letztes Ereignis", state_topic: `${BASE}/${cam.slug}/last_event`, icon: "mdi:motion-sensor" });
+  cfg("button", "refresh", { name: "Live-Bild holen", command_topic: `${BASE}/${cam.slug}/refresh`, icon: "mdi:camera-retake" });
+  if (cam.ts) pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
+  if (cam.battery != null) pub(`${BASE}/${cam.slug}/battery`, cam.battery);
+}
+
+async function startMqtt() {
+  const c = await mqttConfig();
+  if (!c) { state.mqtt = "kein Broker (Mosquitto-Add-on fehlt?)"; log("MQTT: kein Broker gefunden, laeuft ohne MQTT"); return; }
+  mq = mqtt.connect(`mqtt://${c.host}:${c.port}`, {
+    username: c.username, password: c.password, clientId: `${BASE}_bridge`,
+    will: { topic: `${BASE}/status`, payload: "offline", retain: true },
+    reconnectPeriod: 10_000,
+  });
+  mq.on("connect", () => {
+    state.mqtt = "verbunden";
+    log("MQTT verbunden");
+    pub(`${BASE}/status`, "online");
+    for (const cam of Object.values(state.cameras)) publishDiscovery(cam);
+    mq.subscribe(`${BASE}/+/refresh`);
+  });
+  mq.on("message", (topic) => {
+    const m = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/refresh$`));
+    const cam = m && state.cameras[m[1]];
+    if (cam) { log(`${cam.name}: Live-Bild per Knopf angefordert`); liveSnapshot(cam, true); }
+  });
+  mq.on("error", (e) => { state.mqtt = `Fehler: ${e.message}`; log("MQTT-Fehler:", e.message); });
+  mq.on("close", () => { if (state.mqtt === "verbunden") state.mqtt = "getrennt"; });
+}
+
+// --- Eufy ---------------------------------------------------------------------------------------
 
 function store(cam, jpeg, source) {
   cam.jpeg = jpeg;
@@ -46,6 +113,7 @@ function store(cam, jpeg, source) {
   cam.source = source;
   cam.lastError = null;
   try { fs.writeFileSync(cam.file, jpeg); } catch (e) { log("Bild nicht gespeichert:", e.message); }
+  pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
   log(`${cam.name}: neues Bild (${source}, ${jpeg.length} Bytes)`);
 }
 
@@ -90,6 +158,22 @@ async function login() {
   return true;
 }
 
+async function readBattery(cam) {
+  if (!cam.sn) return;
+  try {
+    const dev = await eufy.getDevice(cam.sn);
+    const b = dev.battery?.();
+    let v = b?.level;
+    if (typeof v === "function") v = await v.call(b);
+    if (typeof v === "number" && Number.isFinite(v)) {
+      cam.battery = v;
+      pub(`${BASE}/${cam.slug}/battery`, v);
+    }
+  } catch (e) {
+    log(`${cam.name}: Akkustand nicht lesbar (${String(e?.message ?? e).slice(0, 120)})`);
+  }
+}
+
 async function liveSnapshot(cam, force = false) {
   if (!cam.sn) throw new Error("Kamera nicht verbunden");
   if (cam.busy) return cam.busy;
@@ -113,11 +197,16 @@ async function liveSnapshot(cam, force = false) {
   return cam.busy;
 }
 
-// Ereignisse (Bewegung, Person ...): das Ereignisbild aus dem Push uebernehmen, ohne die Kamera zu wecken
+// Ereignisse (Bewegung, Person ...): an MQTT melden und das Ereignisbild aus dem Push uebernehmen,
+// ohne die Kamera zu wecken
+const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
 eufy.on("event", async (e) => {
   const cam = Object.values(state.cameras).find((c) => c.sn && c.sn === e?.deviceSn);
   if (!cam) return;
   cam.lastEvent = { name: e.eventName, at: new Date().toISOString() };
+  pub(`${BASE}/${cam.slug}/last_event`, e.eventName);
+  if (e.eventName === "motion" || PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/motion`, "ON", false);
+  if (PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/person`, "ON", false);
   try {
     const dev = await eufy.getDevice(cam.sn);
     const fn = dev.camera?.()?.snapshotStored;
@@ -130,7 +219,8 @@ eufy.on("event", async (e) => {
   }
 });
 
-// HTTP-Schnittstelle fuer Home Assistant
+// --- HTTP-Schnittstelle fuer Home Assistant ----------------------------------------------------
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const m = url.pathname.match(/^\/(snapshot|refresh)\/([a-z0-9_]+)(?:\.jpg)?$/);
@@ -157,11 +247,11 @@ const server = http.createServer(async (req, res) => {
   // Status
   res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({
-    login: state.login, info: state.loginInfo,
+    login: state.login, info: state.loginInfo, mqtt: state.mqtt,
     cameras: Object.values(state.cameras).map((c) => ({
       name: c.name, url: `/snapshot/${c.slug}.jpg`, connected: Boolean(c.sn),
       image_age_s: c.jpeg ? Math.round((Date.now() - c.ts) / 1000) : null, source: c.source,
-      busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
+      battery: c.battery, busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
     })),
   }, null, 2));
 });
@@ -170,10 +260,13 @@ server.listen(PORT, () => log(`HTTP auf Port ${PORT}`));
 // Regelmaessige Aktualisierung, nacheinander, damit nicht alle Kameras gleichzeitig wach sind
 async function refreshAll() {
   for (const cam of Object.values(state.cameras)) {
-    if (cam.sn) await liveSnapshot(cam);
+    if (!cam.sn) continue;
+    await liveSnapshot(cam);
+    await readBattery(cam);
   }
 }
 
+await startMqtt();
 try {
   if (await login()) {
     await refreshAll();
@@ -185,6 +278,10 @@ try {
   log("Anmeldung fehlgeschlagen:", state.loginInfo);
 }
 
-const stop = async () => { try { await eufy.disconnect?.(); } catch {} process.exit(0); };
+const stop = async () => {
+  try { pub(`${BASE}/status`, "offline"); mq?.end(true); } catch {}
+  try { await eufy.disconnect?.(); } catch {}
+  process.exit(0);
+};
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
