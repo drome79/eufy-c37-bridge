@@ -1,0 +1,23 @@
+# Eufy C37 Bridge
+
+Holt Bilder der eufyCam C37 (T814X/T814XS) über das inoffizielle
+[`@mega-yfue/eufy-sdk`](https://github.com/mega-yfue/eufy-sdk) und stellt sie im Heimnetz als JPEG bereit.
+In Home Assistant bindet man jede Kamera als **Generic Camera** mit der Bild-Adresse ein.
+
+## Optionen
+
+- `email`, `password`: Eufy-Konto. Empfohlen ist ein eigenes Konto, das in der Eufy-App als Gast freigegeben ist.
+- `cameras`: Gerätenamen wie in der Eufy-App.
+- `refresh_minutes`: Alle wie viele Minuten ein frisches Live-Bild geholt wird (0 = nie, nur bei Ereignissen).
+- `min_live_interval_minutes`: Mindestabstand zwischen zwei Live-Bildern pro Kamera (Akku).
+- `port`: HTTP-Port (Standard 8099).
+- `captcha_answer`, `verify_code`: nur nötig, wenn Eufy bei der Anmeldung ein Captcha oder einen Code verlangt.
+  Das Captcha-Bild liegt dann unter `http://<HA-IP>:8099/captcha.png`.
+
+## Adressen
+
+- `http://<HA-IP>:8099/` — Status (JSON)
+- `http://<HA-IP>:8099/snapshot/<name>.jpg` — letztes Bild, z. B. `hinterhof`, `einfahrt`, `hintertuer`
+- `http://<HA-IP>:8099/refresh/<name>` — frisches Live-Bild erzwingen (weckt die Kamera)
+
+Bei einem Bewegungsereignis übernimmt die Bridge das Ereignisbild aus dem Push, ohne die Kamera zu wecken.
