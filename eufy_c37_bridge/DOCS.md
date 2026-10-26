@@ -27,6 +27,8 @@ Bei einem Bewegungsereignis übernimmt die Bridge das Ereignisbild aus dem Push,
 `http://<HA-IP>:8099/live/<name>.ts` liefert den Livestream als MPEG-TS (Video unverändert, ohne Ton).
 In der Generic Camera als **Stream-Quelle** eintragen. Die Kamera streamt nur, solange jemand zuschaut,
 und hört 20 s nach dem letzten Zuschauer auf, spätestens nach `live_max_minutes` (Standard 5, Akku).
+Kameras, die H.265 senden (z. B. T814XS), werden nach H.264 umgewandelt, weil Browser H.265 per WebRTC
+nicht abspielen; die Höhe dafür stellt `transcode_height` ein (Standard 1080).
 
 ## MQTT (ab 0.2.0)
 

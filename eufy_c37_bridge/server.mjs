@@ -221,11 +221,17 @@ function stopLive(cam, reason) {
 }
 
 function startFfmpeg(cam, s, codec) {
+  // H.264 wird unveraendert durchgereicht. H.265 (z. B. T814XS) koennen Browser per WebRTC nicht abspielen,
+  // deshalb wird es nach H.264 umgewandelt (verkleinert auf transcode_height, Standard 1080).
+  const video = codec === "h264"
+    ? ["-c:v", "copy"]
+    : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
+       "-vf", `scale=-2:${Number(opts.transcode_height || 1080)}`, "-g", "30", "-bf", "0"];
   const args = [
     "-hide_banner", "-loglevel", "error",
     "-fflags", "+genpts+nobuffer", "-use_wallclock_as_timestamps", "1",
     "-f", codec === "h265" ? "hevc" : "h264", "-i", "pipe:0",
-    "-c:v", "copy", "-an",
+    ...video, "-an",
     "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
   ];
   const ff = spawn(opts.ffmpeg_path || "ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -273,19 +279,24 @@ async function ensureLive(cam) {
 }
 
 async function serveLive(cam, req, res) {
-  let s;
-  try { s = await ensureLive(cam); }
-  catch (e) { res.writeHead(503); return res.end(`Livestream nicht verfuegbar: ${String(e?.message ?? e).slice(0, 200)}`); }
-  clearTimeout(s.idleTimer);
+  // Kopfzeilen sofort senden: das Aufwachen der Kamera dauert einige Sekunden, und ein Abrufer
+  // (ffmpeg in Home Assistant) soll so lange warten statt abzubrechen
   res.writeHead(200, { "content-type": "video/mp2t", "cache-control": "no-store", connection: "close" });
-  s.clients.add(res);
-  log(`${cam.name}: Zuschauer verbunden (${s.clients.size})`);
-  req.on("close", () => {
-    s.clients.delete(res);
-    if (cam.live === s && s.clients.size === 0) {
+  let s = null;
+  let closed = false;
+  const armIdle = () => {
+    if (s && cam.live === s && s.clients.size === 0) {
+      clearTimeout(s.idleTimer);
       s.idleTimer = setTimeout(() => { if (cam.live === s && s.clients.size === 0) stopLive(cam, "keine Zuschauer"); }, LIVE_IDLE_MS);
     }
-  });
+  };
+  req.on("close", () => { closed = true; if (s) { s.clients.delete(res); armIdle(); } });
+  try { s = await ensureLive(cam); }
+  catch (e) { log(`${cam.name}: Livestream nicht verfuegbar: ${String(e?.message ?? e).slice(0, 200)}`); return res.end(); }
+  if (closed) { armIdle(); return; }
+  clearTimeout(s.idleTimer);
+  s.clients.add(res);
+  log(`${cam.name}: Zuschauer verbunden (${s.clients.size})`);
 }
 
 // Ereignisse (Bewegung, Person ...): an MQTT melden und das Ereignisbild aus dem Push uebernehmen,
