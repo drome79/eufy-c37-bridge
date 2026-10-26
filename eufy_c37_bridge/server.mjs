@@ -9,7 +9,7 @@ import path from "node:path";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import mqtt from "mqtt";
-import { EufyMega, FileSessionStore } from "@mega-yfue/eufy-sdk";
+import { EufyMega, FileSessionStore, CAPABILITY_MODULES } from "@mega-yfue/eufy-sdk";
 
 const DATA = process.env.DATA_DIR || "/data";
 const OPTIONS_PATH = process.env.OPTIONS_PATH || path.join(DATA, "options.json");
@@ -48,6 +48,7 @@ for (const name of opts.cameras || []) {
     source: ts ? "cache" : null,
     // ein frisches Bild aus dem Cache zaehlt als letzter Live-Versuch -> nach Neustart nicht sofort wecken
     lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null, live: null,
+    caps: [], ptz: false,
   };
 }
 
@@ -87,6 +88,27 @@ function publishDiscovery(cam) {
   if (cam.battery != null) pub(`${BASE}/${cam.slug}/battery`, cam.battery);
 }
 
+// Schwenken/Neigen: nur fuer Kameras, die laut SDK "ptz" koennen
+const PTZ_DIRS = { left: "Links", right: "Rechts", up: "Hoch", down: "Runter" };
+function publishPtz(cam) {
+  if (!cam.ptz) return;
+  const dev = { identifiers: [`${BASE}_${cam.slug}`], name: `C37 ${cam.name}`, manufacturer: "Eufy", model: "eufyCam C37" };
+  for (const [dir, label] of Object.entries(PTZ_DIRS)) {
+    pub(`homeassistant/button/${BASE}_${cam.slug}_ptz_${dir}/config`, JSON.stringify({
+      availability_topic: `${BASE}/status`, device: dev, unique_id: `${BASE}_${cam.slug}_ptz_${dir}`,
+      name: `Schwenken ${label}`, command_topic: `${BASE}/${cam.slug}/ptz`, payload_press: dir, icon: `mdi:arrow-${dir}-bold`,
+    }));
+  }
+}
+
+async function ptzMove(cam, dir) {
+  if (!cam.ptz) throw new Error("Kamera kann laut SDK nicht schwenken");
+  if (!PTZ_DIRS[dir]) throw new Error(`unbekannte Richtung ${dir}`);
+  const dev = await eufy.getDevice(cam.sn);
+  await withTimeout(dev.ptz().rotate(dir), 20_000, "Schwenken");
+  log(`${cam.name}: geschwenkt ${dir}`);
+}
+
 async function startMqtt() {
   const c = await mqttConfig();
   if (!c) { state.mqtt = "kein Broker (Mosquitto-Add-on fehlt?)"; log("MQTT: kein Broker gefunden, laeuft ohne MQTT"); return; }
@@ -99,13 +121,16 @@ async function startMqtt() {
     state.mqtt = "verbunden";
     log("MQTT verbunden");
     pub(`${BASE}/status`, "online");
-    for (const cam of Object.values(state.cameras)) publishDiscovery(cam);
+    for (const cam of Object.values(state.cameras)) { publishDiscovery(cam); publishPtz(cam); }
     mq.subscribe(`${BASE}/+/refresh`);
+    mq.subscribe(`${BASE}/+/ptz`);
   });
-  mq.on("message", (topic) => {
-    const m = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/refresh$`));
+  mq.on("message", (topic, payload) => {
+    const m = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/(refresh|ptz)$`));
     const cam = m && state.cameras[m[1]];
-    if (cam) { log(`${cam.name}: Live-Bild per Knopf angefordert`); liveSnapshot(cam, true); }
+    if (!cam) return;
+    if (m[2] === "refresh") { log(`${cam.name}: Live-Bild per Knopf angefordert`); liveSnapshot(cam, true); }
+    else ptzMove(cam, String(payload)).catch((e) => log(`${cam.name}: Schwenken fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`));
   });
   mq.on("error", (e) => { state.mqtt = `Fehler: ${e.message}`; log("MQTT-Fehler:", e.message); });
   mq.on("close", () => { if (state.mqtt === "verbunden") state.mqtt = "getrennt"; });
@@ -158,7 +183,14 @@ async function login() {
       const dev = await eufy.getDevice(d.sn);
       if (dev.has?.("camera")) { rec = d; break; }
     }
-    if (rec) { cam.sn = rec.sn; log(`${cam.name}: gefunden (${rec.model})`); }
+    if (rec) {
+      cam.sn = rec.sn;
+      const dev = await eufy.getDevice(rec.sn);
+      cam.caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
+      cam.ptz = cam.caps.includes("ptz") && typeof dev.ptz?.()?.rotate === "function";
+      log(`${cam.name}: gefunden (${rec.model}), Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
+      if (cam.ptz) publishPtz(cam);
+    }
     else { cam.lastError = "Geraet nicht im Konto gefunden"; log(`${cam.name}: nicht im Konto gefunden`); }
   }
   return true;
@@ -325,6 +357,13 @@ eufy.on("event", async (e) => {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
+  const pm = url.pathname.match(/^\/ptz\/([a-z0-9_]+)\/(left|right|up|down)$/);
+  if (pm) {
+    const cam = state.cameras[pm[1]];
+    if (!cam) { res.writeHead(404); return res.end("unbekannte Kamera"); }
+    try { await ptzMove(cam, pm[2]); res.writeHead(200); return res.end("ok"); }
+    catch (e) { res.writeHead(409); return res.end(String(e?.message ?? e)); }
+  }
   const lm = url.pathname.match(/^\/live\/([a-z0-9_]+)(?:\.ts)?$/);
   if (lm) {
     const cam = state.cameras[lm[1]];
@@ -363,6 +402,7 @@ const server = http.createServer(async (req, res) => {
       battery: c.battery, busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
       live: c.live ? { viewers: c.live.clients.size, codec: c.live.codec, running_s: Math.round((Date.now() - c.live.startedAt) / 1000) } : null,
       live_url: `/live/${c.slug}.ts`,
+      capabilities: c.caps, ptz: c.ptz,
     })),
   }, null, 2));
 });
