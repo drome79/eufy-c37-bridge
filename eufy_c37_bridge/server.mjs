@@ -36,8 +36,9 @@ const withTimeout = (p, ms, what) =>
 
 const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [], extras: [], removedExtras: [] };
 
-// C37-Familie (eufyCam C37 = T814X / T814XS)
-const C37_MODEL = /^T814/i;
+// C37-Familie (eufyCam C37 = T814X / T814XS). Nicht nur "T814" pruefen: T8140-Z und
+// T8142-R sind andere Akku-Kameras und wuerden sonst als C37 regelmaessig geweckt.
+const C37_MODEL = /^T814X/i;
 
 // Kamera anlegen; Bilder ueber Neustarts hinweg in DATA behalten
 function addCamera(name) {

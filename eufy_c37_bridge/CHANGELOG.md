@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1
+- **Behoben:** Andere Akku-Kameras, deren Modell mit „T814“ beginnt (z. B. T8140-Z, T8142-R), wurden fälschlich als C37
+  erkannt. Sie bekamen MQTT-Entitäten und wurden alle `refresh_minutes` für ein frisches Bild geweckt (Akku, Fehlermeldungen
+  „live stream failed to start“). Als C37 gelten jetzt nur noch T814X und T814XS.
+
 ## 0.10.0
 - **Geräteauswahl zum Anhaken:** „Benutzeroberfläche öffnen“ (oder „Eufy Bridge“ in der Seitenleiste) zeigt alle Geräte
   des Eufy-Kontos mit Typ und Modell. Speichern schreibt die Auswahl in `cameras` und startet die Bridge neu –
