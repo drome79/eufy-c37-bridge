@@ -2,6 +2,10 @@
 
 Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
+> **⚠️ Alpha-Status:** Die Eufy C37 Bridge wurde mit KI-Unterstützung „vibe gecoded“ und befindet sich daher noch in der
+> **Alpha-Phase**. Sie läuft im eigenen Haushalt, ist aber weder umfassend getestet noch geprüft. Fehler, Abstürze und
+> Änderungen ohne Vorwarnung sind möglich – Nutzung auf eigenes Risiko, nicht für sicherheitskritische Zwecke verlassen.
+
 | Add-on | Version | Zweck |
 |---|---|---|
 | [Eufy C37 Bridge](eufy_c37_bridge/) | 0.10.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
