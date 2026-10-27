@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0
+- Keypad (z. B. T8960): Sensoren „Lädt“ und „Signal“, wenn sein Name unter `cameras` eingetragen ist.
+  Mehr liefert das SDK für das Keypad nicht; Moduswechsel am Keypad zeigt das Alarmpanel der HomeBase.
+
 ## 0.8.1
 - Klingelbild: wartet bis ~20 s auf das Push-Bild von Eufy und holt sonst ein frisches Bild von der (ohnehin wachen) Klingel.
   Das Bild landet im „Ereignisbild“ und als Standbild der Kamera.

@@ -228,11 +228,12 @@ async function login() {
     } catch {}
     const selected = wanted.has(String(d.name ?? "").trim().toLowerCase());
     state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? ""), capabilities: caps, selected });
-    // Weitere Geraete: HomeBase (Alarmmodus), Tuersensoren (offen/zu), Tuerklingel (Klingeln) – nur wenn ausgewaehlt
+    // Weitere Geraete: HomeBase (Alarmmodus), Tuersensoren (offen/zu), Tuerklingel (Klingeln), Keypad – nur wenn ausgewaehlt
     const kinds = [];
     if (caps.includes("arming") && !hasCam) kinds.push("station");
     if (caps.includes("contact")) kinds.push("contact");
     if (caps.includes("doorbell")) kinds.push("doorbell");
+    if (caps.includes("keypad")) kinds.push("keypad");
     for (const kind of kinds) {
       if (selected) addExtra(kind, d);
       else unpublishExtra(`${kind}_${slugify(d.name ?? "") || "geraet"}`); // fruehere Entitaeten entfernen
@@ -410,8 +411,9 @@ async function serveLive(cam, req, res) {
   log(`${cam.name}: Zuschauer verbunden (${s.clients.size})`);
 }
 
-// --- Weitere Geraete: HomeBase, Tuersensoren, Tuerklingel -------------------------------------
-// Alarmpanel fuer Stationen mit "arming", Kontakt-Sensoren fuer "contact", Klingel-Sensor + Ereignisbild fuer "doorbell".
+// --- Weitere Geraete: HomeBase, Tuersensoren, Tuerklingel, Keypad-------------------------------
+// Alarmpanel fuer Stationen mit "arming", Kontakt-Sensoren fuer "contact", Klingel-Sensor + Ereignisbild fuer "doorbell",
+// Laden + Signal fuer "keypad" (das SDK liefert dort nur diese Lesewerte).
 // Die Sirene wird bewusst NICHT angeboten.
 
 // Eufy-Guard-Modus: Wire-Wert -> Name
@@ -424,7 +426,7 @@ const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", DISARM: "disarmed" };
 // Entitaeten eines nicht (mehr) ausgewaehlten weiteren Geraets aus Home Assistant entfernen
 function unpublishExtra(slug) {
   const keys = [["alarm_control_panel", "alarm"], ["sensor", "mode"], ["binary_sensor", "contact"], ["sensor", "battery"],
-    ["binary_sensor", "ring"], ["image", "event_image"]];
+    ["binary_sensor", "ring"], ["image", "event_image"], ["binary_sensor", "charging"], ["sensor", "rssi"]];
   for (const [component, key] of keys) pub(`homeassistant/${component}/${BASE}_${slug}_${key}/config`, "");
   if (!state.removedExtras.includes(slug)) state.removedExtras.push(slug);
 }
@@ -465,6 +467,10 @@ function publishExtraDiscovery(x) {
     cfg("binary_sensor", "ring", { name: "Klingeln", icon: "mdi:doorbell", state_topic: `${t}/ring`, off_delay: 30 });
     cfg("image", "event_image", { name: "Ereignisbild", image_topic: `${t}/event_image`, content_type: "image/jpeg" });
   }
+  if (x.kind === "keypad") {
+    cfg("binary_sensor", "charging", { name: "Lädt", device_class: "battery_charging", state_topic: `${t}/charging`, entity_category: "diagnostic" });
+    cfg("sensor", "rssi", { name: "Signal", device_class: "signal_strength", unit_of_measurement: "dBm", state_class: "measurement", state_topic: `${t}/rssi`, entity_category: "diagnostic" });
+  }
 }
 
 async function refreshExtra(x) {
@@ -485,6 +491,13 @@ async function refreshExtra(x) {
       if (typeof open === "boolean" && open !== x.values.open) { x.values.open = open; pub(`${t}/contact`, open ? "ON" : "OFF"); }
       const bat = await readVal(dev.battery?.(), "level");
       if (typeof bat === "number" && bat !== x.values.battery) { x.values.battery = bat; pub(`${t}/battery`, bat); }
+    }
+    if (x.kind === "keypad") {
+      const kp = dev.keypad?.();
+      const charging = await readVal(kp, "charging");
+      if (typeof charging === "boolean" && charging !== x.values.charging) { x.values.charging = charging; pub(`${t}/charging`, charging ? "ON" : "OFF"); }
+      const rssi = await readVal(kp, "rssi");
+      if (typeof rssi === "number" && rssi !== x.values.rssi) { x.values.rssi = rssi; pub(`${t}/rssi`, rssi); }
     }
   } catch (e) {
     x.values.error = String(e?.message ?? e).slice(0, 160);
