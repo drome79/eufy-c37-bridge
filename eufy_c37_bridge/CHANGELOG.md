@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1
+- **Behoben:** Kein Livebild von der Türklingel (T8213). Das SDK meldet ihr erstes Bild als H.265, alle folgenden als H.264;
+  die Bridge legte die Umwandlung nach dem ersten Bild fest, ffmpeg bekam dann H.264 als H.265 und lieferte kein Video.
+  Jetzt entscheidet die Mehrheit der ersten fünf Bilder (~0,3 s). Das Protokoll wird nicht mehr mit „Codec-Wechsel“ geflutet.
+
 ## 0.12.0
 - **Schneller Livestart im Ernstfall:** Bei **Person** oder **Klingeln** startet die Bridge den Livestream sofort und hält ihn
   `prewarm_seconds` (Standard 45) bereit. Wer die Push-Nachricht antippt, muss nicht mehr 4–6 Sekunden aufs Aufwachen der
