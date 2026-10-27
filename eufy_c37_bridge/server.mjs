@@ -359,6 +359,8 @@ async function ensureLive(cam) {
     await withTimeout(firstFrame, LIVE_START_TIMEOUT_MS, "Livestream-Start");
     s.maxTimer = setTimeout(() => stopLive(cam, `Hoechstdauer ${LIVE_MAX_MIN} min erreicht`), LIVE_MAX_MIN * 60_000);
     log(`${cam.name}: Livestream laeuft (${s.codec})`);
+    // Waehrend die Kamera ohnehin wach ist, ein frisches Standbild mitnehmen (kostet kein zusaetzliches Wecken)
+    setTimeout(() => { if (cam.live === s) liveSnapshot(cam, true); }, 5_000);
     return s;
   } catch (e) {
     stopLive(cam, `Start fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`);
@@ -392,11 +394,14 @@ async function serveLive(cam, req, res) {
 const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
 eufy.on("event", async (e) => {
   const cam = Object.values(state.cameras).find((c) => c.sn && c.sn === e?.deviceSn);
-  if (!cam || cam.liveOnly) return;
+  if (!cam) return;
   cam.lastEvent = { name: e.eventName, at: new Date().toISOString() };
-  pub(`${BASE}/${cam.slug}/last_event`, e.eventName);
-  if (e.eventName === "motion" || PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/motion`, "ON", false);
-  if (PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/person`, "ON", false);
+  // Nur-Live-Kameras: keine MQTT-Meldungen (das macht eufy-security-ws), aber das Ereignisbild als Standbild behalten
+  if (!cam.liveOnly) {
+    pub(`${BASE}/${cam.slug}/last_event`, e.eventName);
+    if (e.eventName === "motion" || PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/motion`, "ON", false);
+    if (PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/person`, "ON", false);
+  }
   try {
     const dev = await eufy.getDevice(cam.sn);
     const fn = dev.camera?.()?.snapshotStored;
