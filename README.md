@@ -45,8 +45,11 @@ unabhängig davon und kann parallel dazu laufen.
 1. In Home Assistant: **Einstellungen → Add-ons → Add-on-Store**.
 2. Oben rechts im Menü (⋮) **Repositories** wählen und diese Adresse eintragen:
    ```
-   https://github.com/drome79/ha-addons
+   https://github.com/drome79/eufy-c37-bridge
    ```
+   Wer das Repository noch unter der alten Adresse `https://github.com/drome79/ha-addons` eingetragen hat,
+   lässt sie einfach stehen: GitHub leitet sie weiter, Updates kommen weiterhin an. Bitte die Adresse in
+   Home Assistant **nicht** austauschen, sonst gilt das Add-on als neu und muss neu eingerichtet werden.
 3. Im Store erscheint **Eufy C37 Bridge**. Installieren, in der **Konfiguration** E-Mail und Passwort des Eufy-Kontos eintragen, speichern, starten.
 
 ---
