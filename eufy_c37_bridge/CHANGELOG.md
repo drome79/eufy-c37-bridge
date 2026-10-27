@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+- **Behoben (`full_support`):** Die Türklingel bekam zwei „Ereignisbild“-Entitäten (am Kamera- und am Klingel-Gerät).
+  Das Ereignisbild gibt es jetzt nur noch am Klingel-Gerät.
+
 ## 0.11.0
 - **Neue Option `full_support`** (Standard aus): bindet **alle** ausgewählten Eufy-Kameras voll ein, nicht nur die C37.
   Sie bekommen dieselben MQTT-Entitäten wie die C37 statt nur Livevideo. Gedacht für Installationen ohne `eufy-security-ws`;
