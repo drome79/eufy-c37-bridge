@@ -113,7 +113,9 @@ function publishDiscovery(cam) {
   }
   cfg("sensor", "image_ts", { name: "Letztes Bild", device_class: "timestamp", state_topic: `${t}/image_ts` });
   cfg("sensor", "last_event", { name: "Letztes Ereignis", state_topic: `${t}/last_event`, icon: "mdi:motion-sensor" });
-  cfg("image", "event_image", { name: "Ereignisbild", image_topic: `${t}/event_image`, content_type: "image/jpeg" });
+  // Tuerklingeln haben ihr Ereignisbild schon am Klingel-Geraet (weitere Geraete) – hier nicht doppelt anlegen
+  if (has("doorbell")) pub(`homeassistant/image/${BASE}_${cam.slug}_event_image/config`, "");
+  else cfg("image", "event_image", { name: "Ereignisbild", image_topic: `${t}/event_image`, content_type: "image/jpeg" });
   cfg("sensor", "rssi", { name: "WLAN-Signal", state_topic: `${t}/rssi`, state_class: "measurement", icon: "mdi:wifi", entity_category: "diagnostic" });
   cfg("button", "refresh", { name: "Live-Bild holen", command_topic: `${t}/refresh`, icon: "mdi:camera-retake" });
   // Schalter: was die Kamera laut SDK kann. Zustand kommt aus readCameraState, Befehle ueber <slug>/set/<key>
@@ -294,7 +296,7 @@ function store(cam, jpeg, source) {
   try { fs.writeFileSync(cam.file, jpeg); } catch (e) { log("Bild nicht gespeichert:", e.message); }
   pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
   // Ereignisbild zusaetzlich als MQTT-Bild (Entitaet "Ereignisbild"), z. B. fuer Push-Nachrichten mit Bild
-  if (!cam.liveOnly && source.startsWith("event") && mq?.connected) mq.publish(`${BASE}/${cam.slug}/event_image`, jpeg, { retain: true });
+  if (!cam.liveOnly && !cam.caps.includes("doorbell") && source.startsWith("event") && mq?.connected) mq.publish(`${BASE}/${cam.slug}/event_image`, jpeg, { retain: true });
   log(`${cam.name}: neues Bild (${source}, ${jpeg.length} Bytes)`);
 }
 
