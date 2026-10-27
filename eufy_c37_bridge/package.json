@@ -1,6 +1,6 @@
 {
   "name": "eufy-c37-bridge",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "description": "Bilder der eufyCam C37 ueber @mega-yfue/eufy-sdk fuer Home Assistant",
