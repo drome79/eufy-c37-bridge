@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.5.2 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.6.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -72,7 +72,8 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 - **Livevideo für andere Eufy-Kameras** (z. B. Türklingel T8213): Trägt man ihren Namen unter `cameras` ein, liefert
   die Bridge für sie **nur** das Livevideo – keine MQTT-Entitäten, kein regelmäßiges Wecken. So kann die Kamera
   ansonsten weiter über `eufy-security-ws` laufen. Als Standbild hält die Bridge das letzte Ereignisbild (z. B. Klingeln)
-  und ein Bild aus dem letzten Livestream vor.
+  und ein Bild aus dem letzten Livestream vor. Kann die Kamera schwenken (z. B. Innenkamera T8410), bekommt sie
+  die Knöpfe „Schwenken links/rechts/hoch/runter“ (Gerät „Eufy <Name>“).
 - **Schwenken (PTZ)** wird automatisch freigeschaltet, sobald das SDK es für die Kamera meldet
   (für die C37 ist das derzeit nicht der Fall).
 

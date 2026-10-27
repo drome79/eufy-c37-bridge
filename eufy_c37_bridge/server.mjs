@@ -74,13 +74,19 @@ async function mqttConfig() {
   } catch { return null; }
 }
 
-function publishDiscovery(cam) {
-  const dev = {
+// Geraet fuer MQTT-Discovery: C37 heissen "C37 <Name>", andere Eufy-Kameras "Eufy <Name>"
+function deviceInfo(cam) {
+  const c37 = C37_MODEL.test(cam.model ?? "");
+  return {
     identifiers: [`${BASE}_${cam.slug}`],
-    name: `C37 ${cam.name}`,
+    name: `${c37 ? "C37" : "Eufy"} ${cam.name}`,
     manufacturer: "Eufy",
-    model: "eufyCam C37",
+    model: c37 ? "eufyCam C37" : (cam.model || "Eufy-Kamera"),
   };
+}
+
+function publishDiscovery(cam) {
+  const dev = deviceInfo(cam);
   const common = { availability_topic: `${BASE}/status`, device: dev };
   const cfg = (component, key, body) =>
     pub(`homeassistant/${component}/${BASE}_${cam.slug}_${key}/config`,
@@ -107,7 +113,7 @@ function unpublishDiscovery(slug) {
 const PTZ_DIRS = { left: "Links", right: "Rechts", up: "Hoch", down: "Runter" };
 function publishPtz(cam) {
   if (!cam.ptz) return;
-  const dev = { identifiers: [`${BASE}_${cam.slug}`], name: `C37 ${cam.name}`, manufacturer: "Eufy", model: "eufyCam C37" };
+  const dev = deviceInfo(cam);
   for (const [dir, label] of Object.entries(PTZ_DIRS)) {
     pub(`homeassistant/button/${BASE}_${cam.slug}_ptz_${dir}/config`, JSON.stringify({
       availability_topic: `${BASE}/status`, device: dev, unique_id: `${BASE}_${cam.slug}_ptz_${dir}`,
@@ -139,7 +145,7 @@ async function startMqtt() {
     // nur Kameras melden, die im Konto gefunden wurden (sonst entstehen Geister-Entitaeten)
     for (const cam of Object.values(state.cameras)) {
       if (cam.sn && !cam.liveOnly) { publishDiscovery(cam); publishPtz(cam); }
-      else if (cam.liveOnly) unpublishDiscovery(cam.slug);
+      else if (cam.liveOnly) { unpublishDiscovery(cam.slug); publishPtz(cam); }
     }
     for (const slug of state.removed) unpublishDiscovery(slug);
     mq.subscribe(`${BASE}/+/refresh`);
@@ -247,7 +253,8 @@ async function bindCamera(cam, rec) {
   // nur das Livevideo: keine MQTT-Entitaeten, kein regelmaessiges Wecken, keine Ereignisbilder.
   cam.liveOnly = !C37_MODEL.test(rec.model ?? "");
   log(`${cam.name}: verbunden (${rec.model})${cam.liveOnly ? ", nur Livevideo" : ""}, Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
-  if (cam.liveOnly) { unpublishDiscovery(cam.slug); return; }
+  // Nur-Live-Kameras: keine Sensoren, aber Schwenk-Knoepfe, falls die Kamera schwenken kann
+  if (cam.liveOnly) { unpublishDiscovery(cam.slug); publishPtz(cam); return; }
   publishDiscovery(cam);
   if (cam.ptz) publishPtz(cam);
 }
@@ -339,7 +346,8 @@ async function ensureLive(cam) {
     const dev = await eufy.getDevice(cam.sn);
     const liveFn = dev.camera?.()?.live;
     if (typeof liveFn !== "function") throw new Error("Livevideo wird nicht angeboten");
-    const consumer = await liveFn({ powered: "battery" });
+    // Akku-Kameras bekommen ein Strom-Budget, Kameras mit Netzteil (z. B. Innenkameras) streamen unbegrenzt
+    const consumer = await liveFn({ powered: cam.caps.includes("battery") ? "battery" : "wired" });
     s.consumer = consumer;
     const firstFrame = new Promise((resolve, reject) => {
       consumer.on("video", (frame) => {
