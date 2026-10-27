@@ -137,7 +137,10 @@ async function startMqtt() {
     log("MQTT verbunden");
     pub(`${BASE}/status`, "online");
     // nur Kameras melden, die im Konto gefunden wurden (sonst entstehen Geister-Entitaeten)
-    for (const cam of Object.values(state.cameras)) if (cam.sn) { publishDiscovery(cam); publishPtz(cam); }
+    for (const cam of Object.values(state.cameras)) {
+      if (cam.sn && !cam.liveOnly) { publishDiscovery(cam); publishPtz(cam); }
+      else if (cam.liveOnly) unpublishDiscovery(cam.slug);
+    }
     for (const slug of state.removed) unpublishDiscovery(slug);
     mq.subscribe(`${BASE}/+/refresh`);
     mq.subscribe(`${BASE}/+/ptz`);
@@ -240,7 +243,11 @@ async function bindCamera(cam, rec) {
   const dev = await eufy.getDevice(rec.sn);
   cam.caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
   cam.ptz = cam.caps.includes("ptz") && typeof dev.ptz?.()?.rotate === "function";
-  log(`${cam.name}: verbunden (${rec.model}), Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
+  // Andere Eufy-Kameras (z. B. Tuerklingel) laufen meist schon ueber eufy-security-ws. Fuer sie liefert die Bridge
+  // nur das Livevideo: keine MQTT-Entitaeten, kein regelmaessiges Wecken, keine Ereignisbilder.
+  cam.liveOnly = !C37_MODEL.test(rec.model ?? "");
+  log(`${cam.name}: verbunden (${rec.model})${cam.liveOnly ? ", nur Livevideo" : ""}, Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
+  if (cam.liveOnly) { unpublishDiscovery(cam.slug); return; }
   publishDiscovery(cam);
   if (cam.ptz) publishPtz(cam);
 }
@@ -385,7 +392,7 @@ async function serveLive(cam, req, res) {
 const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
 eufy.on("event", async (e) => {
   const cam = Object.values(state.cameras).find((c) => c.sn && c.sn === e?.deviceSn);
-  if (!cam) return;
+  if (!cam || cam.liveOnly) return;
   cam.lastEvent = { name: e.eventName, at: new Date().toISOString() };
   pub(`${BASE}/${cam.slug}/last_event`, e.eventName);
   if (e.eventName === "motion" || PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/motion`, "ON", false);
@@ -424,7 +431,8 @@ const server = http.createServer(async (req, res) => {
   if (m) {
     const cam = state.cameras[m[2]];
     if (!cam) { res.writeHead(404); return res.end("unbekannte Kamera"); }
-    const stale = !cam.jpeg || (REFRESH_MIN > 0 && Date.now() - cam.ts > REFRESH_MIN * 60_000);
+    // Nur-Live-Kameras werden fuer Standbilder nie von selbst geweckt
+    const stale = !cam.liveOnly && (!cam.jpeg || (REFRESH_MIN > 0 && Date.now() - cam.ts > REFRESH_MIN * 60_000));
     if (m[1] === "refresh" || stale) {
       const p = liveSnapshot(cam, m[1] === "refresh");
       if (!cam.jpeg && p) await p; // erstes Bild abwarten
@@ -452,7 +460,7 @@ const server = http.createServer(async (req, res) => {
       battery: c.battery, busy: Boolean(c.busy), last_error: c.lastError, last_event: c.lastEvent,
       live: c.live ? { viewers: c.live.clients.size, codec: c.live.codec, running_s: Math.round((Date.now() - c.live.startedAt) / 1000) } : null,
       live_url: `/live/${c.slug}.ts`,
-      capabilities: c.caps, ptz: c.ptz,
+      capabilities: c.caps, ptz: c.ptz, live_only: Boolean(c.liveOnly),
     })),
   }, null, 2));
 });
@@ -461,7 +469,7 @@ server.listen(PORT, () => log(`HTTP auf Port ${PORT}`));
 // Regelmaessige Aktualisierung, nacheinander, damit nicht alle Kameras gleichzeitig wach sind
 async function refreshAll() {
   for (const cam of Object.values(state.cameras)) {
-    if (!cam.sn) continue;
+    if (!cam.sn || cam.liveOnly) continue;
     await liveSnapshot(cam);
     await readBattery(cam);
   }
