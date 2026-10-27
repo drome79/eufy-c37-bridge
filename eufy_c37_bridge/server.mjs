@@ -34,7 +34,7 @@ const slugify = (s) =>
 const withTimeout = (p, ms, what) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: keine Antwort nach ${ms / 1000} s`)), ms))]);
 
-const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [], extras: [] };
+const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [], extras: [], removedExtras: [] };
 
 // C37-Familie (eufyCam C37 = T814X / T814XS)
 const C37_MODEL = /^T814/i;
@@ -152,6 +152,7 @@ async function startMqtt() {
     mq.subscribe(`${BASE}/+/ptz`);
     mq.subscribe(`${BASE}/+/alarm/set`);
     for (const x of state.extras) { publishExtraDiscovery(x); x.values = {}; }
+    for (const slug of state.removedExtras) unpublishExtra(slug);
     if (state.extras.length) refreshExtras();
   });
   mq.on("message", (topic, payload) => {
@@ -212,8 +213,11 @@ async function login() {
   log("Anmeldung ok");
   const list = await eufy.getDevices();
 
-  // Alle Geraete des Kontos mit Kamera ermitteln (fuer Status/Protokoll und die automatische Erkennung)
-  const cams = [];
+  // Die Bridge liefert NUR Geraete, deren Name in der Konfiguration (`cameras`) steht – Kameras ebenso wie
+  // HomeBase, Tuersensoren und Tuerklingel. Ein Name passt auf alle Geraete gleichen Namens
+  // (z. B. "Hintertür" = Kamera und Tuersensor). Ohne Eintrag liefert die Bridge nichts.
+  const wanted = new Set((opts.cameras || []).map((n) => String(n).trim().toLowerCase()).filter(Boolean));
+  const camByName = {};
   for (const d of list) {
     let hasCam = false;
     let caps = [];
@@ -222,44 +226,33 @@ async function login() {
       hasCam = Boolean(dev.has?.("camera"));
       caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
     } catch {}
-    state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? ""), capabilities: caps });
-    if (hasCam) cams.push(d);
-    // Weitere Geraete: HomeBase (Alarmmodus), Tuersensoren (offen/zu), Tuerklingel (Klingeln)
-    if (opts.extra_devices !== false) {
-      if (caps.includes("arming") && !hasCam) addExtra("station", d);
-      if (caps.includes("contact")) addExtra("contact", d);
-      if (caps.includes("doorbell")) addExtra("doorbell", d);
+    const selected = wanted.has(String(d.name ?? "").trim().toLowerCase());
+    state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? ""), capabilities: caps, selected });
+    // Weitere Geraete: HomeBase (Alarmmodus), Tuersensoren (offen/zu), Tuerklingel (Klingeln) – nur wenn ausgewaehlt
+    const kinds = [];
+    if (caps.includes("arming") && !hasCam) kinds.push("station");
+    if (caps.includes("contact")) kinds.push("contact");
+    if (caps.includes("doorbell")) kinds.push("doorbell");
+    for (const kind of kinds) {
+      if (selected) addExtra(kind, d);
+      else unpublishExtra(`${kind}_${slugify(d.name ?? "") || "geraet"}`); // fruehere Entitaeten entfernen
     }
+    if (hasCam && selected) camByName[String(d.name).trim().toLowerCase()] = d;
   }
-  log(`Geraete im Konto: ${state.accountDevices.map((d) => `${d.name} (${d.model}${d.camera ? ", Kamera" : ""})`).join("; ")}`);
+  log(`Geraete im Konto: ${state.accountDevices.map((d) => `${d.name} (${d.model}${d.camera ? ", Kamera" : ""}${d.selected ? ", ausgewaehlt" : ""})`).join("; ")}`);
 
-  // Konfigurierte Namen zuordnen. Namen koennen doppelt vorkommen (z. B. Tuersensor und Kamera "Hintertür"),
-  // deshalb nur Geraete mit Kamera.
-  const matched = [];
+  state.mode = "Namen aus der Konfiguration";
   for (const cam of Object.values(state.cameras)) {
-    const rec = cams.find((d) => (d.name ?? "").toLowerCase() === cam.name.toLowerCase() && !matched.includes(d));
-    if (rec) { matched.push(rec); await bindCamera(cam, rec); }
+    const rec = camByName[cam.name.trim().toLowerCase()];
+    if (rec) { await bindCamera(cam, rec); continue; }
+    // Name gehoert zu keiner Kamera: entweder ein anderes Geraet (HomeBase, Sensor) oder unbekannt
+    const known = state.accountDevices.some((d) => String(d.name ?? "").trim().toLowerCase() === cam.name.trim().toLowerCase());
+    if (!known) log(`${cam.name}: nicht im Konto gefunden`);
+    unpublishDiscovery(cam.slug);
+    state.removed.push(cam.slug);
+    delete state.cameras[cam.slug];
   }
-
-  // Automatische Erkennung: wenn keine Namen eingetragen sind oder keiner davon im Konto existiert,
-  // werden alle C37 des Kontos uebernommen.
-  if (matched.length === 0) {
-    for (const cam of Object.values(state.cameras)) {
-      log(`${cam.name}: nicht im Konto gefunden, wird ignoriert`);
-      unpublishDiscovery(cam.slug);
-      state.removed.push(cam.slug);
-      delete state.cameras[cam.slug];
-    }
-    const auto = cams.filter((d) => C37_MODEL.test(d.model ?? ""));
-    state.mode = "automatisch";
-    log(auto.length ? `Automatische Erkennung: ${auto.map((d) => d.name).join(", ")}` : "Automatische Erkennung: keine C37 im Konto gefunden");
-    for (const rec of auto) await bindCamera(addCamera(rec.name), rec);
-  } else {
-    state.mode = "Namen aus der Konfiguration";
-    for (const cam of Object.values(state.cameras)) {
-      if (!cam.sn) { cam.lastError = "Geraet nicht im Konto gefunden"; log(`${cam.name}: nicht im Konto gefunden`); }
-    }
-  }
+  if (wanted.size === 0) log("Keine Geraete in der Konfiguration eingetragen – die Bridge liefert nichts. Verfuegbare Geraete stehen oben bzw. auf der Statusseite.");
   return true;
 }
 
@@ -427,6 +420,14 @@ const ARMING_WIRE = { 0: "away", 1: "home", 2: "schedule", 3: "custom1", 4: "cus
 const ARMING_HA = { home: "armed_home", away: "armed_away", disarmed: "disarmed", off: "disarmed",
   schedule: "armed_custom_bypass", custom1: "armed_custom_bypass", custom2: "armed_custom_bypass", custom3: "armed_custom_bypass", geofence: "armed_custom_bypass" };
 const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", DISARM: "disarmed" };
+
+// Entitaeten eines nicht (mehr) ausgewaehlten weiteren Geraets aus Home Assistant entfernen
+function unpublishExtra(slug) {
+  const keys = [["alarm_control_panel", "alarm"], ["sensor", "mode"], ["binary_sensor", "contact"], ["sensor", "battery"],
+    ["binary_sensor", "ring"], ["image", "event_image"]];
+  for (const [component, key] of keys) pub(`homeassistant/${component}/${BASE}_${slug}_${key}/config`, "");
+  if (!state.removedExtras.includes(slug)) state.removedExtras.push(slug);
+}
 
 function addExtra(kind, rec) {
   const slug = `${kind}_${slugify(rec.name) || "geraet"}`;

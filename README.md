@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.7.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.8.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -74,7 +74,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
   ansonsten weiter über `eufy-security-ws` laufen. Als Standbild hält die Bridge das letzte Ereignisbild (z. B. Klingeln)
   und ein Bild aus dem letzten Livestream vor. Kann die Kamera schwenken (z. B. Innenkamera T8410), bekommt sie
   die Knöpfe „Schwenken links/rechts/hoch/runter“ (Gerät „Eufy <Name>“).
-- **Weitere Eufy-Geräte** (Option `extra_devices`, Standard an), per MQTT:
+- **Weitere Eufy-Geräte** (wenn ihr Name unter `cameras` eingetragen ist), per MQTT:
   HomeBase als **Alarmpanel** (Zuhause, Abwesend, Deaktiviert), **Türsensoren** (offen/zu, Akku) und die
   **Türklingel** (Klingeln, Ereignisbild). Eine Sirene wird bewusst nicht angeboten.
 - **Schwenken (PTZ)** wird automatisch freigeschaltet, sobald das SDK es für die Kamera meldet
@@ -86,13 +86,11 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 |---|---|---|
 | `email`, `password` | – | Eufy-Konto. Empfohlen: ein eigenes Konto, in der Eufy-App als Gast freigegeben. |
 | `country` | `DE` | Land des Eufy-Kontos |
-| `cameras` | leer | **Leer lassen = automatische Erkennung** aller C37 (Modell T814…) im Konto. Optional Gerätenamen wie in der Eufy-App, um nur bestimmte Kameras einzubinden. Wird keiner der Namen im Konto gefunden, erkennt die Bridge ebenfalls automatisch. |
+| `cameras` | leer | **Gerätenamen wie in der Eufy-App.** Die Bridge liefert nur, was hier steht: Kameras ebenso wie HomeBase, Türsensoren und Türklingel. Ohne Eintrag liefert sie nichts. Welche Geräte es im Konto gibt, zeigen Statusseite und Protokoll nach dem Start. Ein Name gilt für alle Geräte gleichen Namens. |
 | `refresh_minutes` | `30` | Alle wie viele Minuten ein frisches Bild geholt wird (`0` = nie) |
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |
 | `live_max_minutes` | `5` | Längster Livestream am Stück (Akku) |
-| `transcode_height` | `1080` | Bildhöhe, wenn H.265 nach H.264 umgewandelt wird |
-| `extra_devices` | `true` | HomeBase, Türsensoren und Türklingel zusätzlich per MQTT einbinden |
-| `port` | `8099` | HTTP-Port der Bridge |
+| `transcode_height` | `1080` | Bildhöhe, wenn H.265 nach H.264 umgewandelt wird || `port` | `8099` | HTTP-Port der Bridge |
 | `captcha_answer`, `verify_code` | – | Nur nötig, wenn Eufy bei der Anmeldung ein Captcha oder einen Code verlangt |
 
 ### Adressen

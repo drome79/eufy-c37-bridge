@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+- **Geändert:** Die Bridge liefert nur noch Geräte, deren Name unter `cameras` eingetragen ist – Kameras ebenso wie
+  HomeBase, Türsensoren und Türklingel. Die automatische Erkennung entfällt; ohne Eintrag liefert die Bridge nichts.
+  Ein Name gilt für alle Geräte gleichen Namens (z. B. Kamera und Türsensor „Hintertür“).
+- Nicht (mehr) ausgewählte Geräte werden aus Home Assistant entfernt.
+- Die Option `extra_devices` entfällt (wird ignoriert).
+
 ## 0.7.0
 - Weitere Eufy-Geräte per MQTT (Option `extra_devices`, Standard an):
   - HomeBase und andere Stationen ohne Kamera: Alarmpanel „Alarmmodus“ (Zuhause, Abwesend, Deaktiviert) und Sensor „Modus (Eufy)“.
