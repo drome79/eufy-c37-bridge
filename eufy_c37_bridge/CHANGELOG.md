@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1
+- Statusseite zeigt die Fähigkeiten aller Geräte im Eufy-Konto (z. B. HomeBase, Türsensoren), nicht nur der eingebundenen Kameras.
+
 ## 0.6.0
 - Schwenk-Knöpfe (links/rechts/hoch/runter) auch für Kameras im Modus „nur Livevideo“, z. B. Innenkamera T8410.
 - Kameras mit Netzteil streamen ohne Akku-Budget.

@@ -207,8 +207,13 @@ async function login() {
   const cams = [];
   for (const d of list) {
     let hasCam = false;
-    try { hasCam = Boolean((await eufy.getDevice(d.sn)).has?.("camera")); } catch {}
-    state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? "") });
+    let caps = [];
+    try {
+      const dev = await eufy.getDevice(d.sn);
+      hasCam = Boolean(dev.has?.("camera"));
+      caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
+    } catch {}
+    state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? ""), capabilities: caps });
     if (hasCam) cams.push(d);
   }
   log(`Geraete im Konto: ${state.accountDevices.map((d) => `${d.name} (${d.model}${d.camera ? ", Kamera" : ""})`).join("; ")}`);
