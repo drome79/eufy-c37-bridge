@@ -475,6 +475,8 @@ function startFfmpeg(cam, s, codec) {
     "-probesize", "32768", "-analyzeduration", "0",
     "-f", codec === "h265" ? "hevc" : "h264", "-i", "pipe:0",
     ...video, "-an",
+    // Jedes Paket sofort ausgeben: sonst sammelt ffmpeg ~32 KB, das dauerte bei der Tuerklingel nachts 3–5 s
+    "-flush_packets", "1", "-muxdelay", "0",
     "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
   ];
   const ff = spawn(opts.ffmpeg_path || "ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.5
+- **Schnellerer Livestart bei niedriger Datenrate:** ffmpeg gibt jedes Paket sofort aus (`-flush_packets 1 -muxdelay 0`).
+  Vorher sammelte es ~32 KB, bevor das erste Bild herauskam – bei der Türklingel nachts (~15 KB/s) 3–5 s.
+
 ## 0.12.4
 - **Schnellerer Livestart, vor allem der Türklingel:** ffmpeg analysiert den Eingang nur noch kurz (`-probesize 32768
   -analyzeduration 0`). Bei niedriger Datenrate wartete ffmpeg vorher gut 4 s, bevor es das erste Bild ausgab.
