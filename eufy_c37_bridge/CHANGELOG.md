@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.4
+- **Schnellerer Livestart, vor allem der Türklingel:** ffmpeg analysiert den Eingang nur noch kurz (`-probesize 32768
+  -analyzeduration 0`). Bei niedriger Datenrate wartete ffmpeg vorher gut 4 s, bevor es das erste Bild ausgab.
+- Kameras, die beim Start zwei Codecs liefern (Türklingel), merken sich den eigentlichen Codec (`/data/codecs.json`) und
+  starten beim nächsten Mal gleich damit, ohne Umschalten.
+
 ## 0.12.3
 - **Behoben:** Kein Livebild von der Türklingel (T8213), dritter Anlauf. Die Klingel liefert zwei Codecs: ein H.265-Schlüsselbild
   zu Beginn und ~0,5 s später H.264-Schlüsselbilder. Kommt in den ersten 3 s ein Schlüsselbild mit anderem Codec, stellt die

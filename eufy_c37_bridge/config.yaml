@@ -1,5 +1,5 @@
 name: Eufy C37 Bridge
-version: "0.12.3"
+version: "0.12.4"
 slug: eufy_c37_bridge
 description: Bilder der eufyCam C37 über das eufy-sdk für Home Assistant (Generic Camera)
 url: https://github.com/drome79/eufy-c37-bridge
