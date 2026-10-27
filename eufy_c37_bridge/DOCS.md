@@ -33,6 +33,8 @@ In der Generic Camera als **Stream-Quelle** eintragen. Die Kamera streamt nur, s
 und hört 20 s nach dem letzten Zuschauer auf, spätestens nach `live_max_minutes` (Standard 5, Akku).
 Kameras, die H.265 senden (z. B. T814XS), werden nach H.264 umgewandelt, weil Browser H.265 per WebRTC
 nicht abspielen; die Höhe dafür stellt `transcode_height` ein (Standard 1080).
+Bei **Person** oder **Klingeln** startet die Bridge den Livestream sofort vor und hält ihn `prewarm_seconds`
+(Standard 45, `0` = aus) bereit, damit er beim Öffnen der Push-Nachricht ohne Aufwachzeit läuft.
 
 ## MQTT (ab 0.2.0)
 

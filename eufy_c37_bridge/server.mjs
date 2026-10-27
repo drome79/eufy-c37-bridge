@@ -26,7 +26,10 @@ const BASE = "eufy_c37";
 // Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
 // Standard aus, damit Installationen, die daneben eufy-security-ws nutzen, keine doppelten Entitaeten bekommen.
 const FULL_SUPPORT = Boolean(opts.full_support);
-const STATE_POLL_MS = 60_000; // Schalter, Akku, Signal der Kameras nachlesen (gepufferte Werte, weckt nicht)
+const STATE_POLL_MS = 60_000;
+// Ab 0.12.0: bei Person und Klingeln den Livestream sofort vorstarten und so lange bereithalten,
+// damit er beim Antippen der Push-Nachricht schon laeuft (die Kamera ist dann ohnehin wach). 0 = aus.
+const PREWARM_S = Number(opts.prewarm_seconds ?? 45); // Schalter, Akku, Signal der Kameras nachlesen (gepufferte Werte, weckt nicht)
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -493,8 +496,9 @@ async function ensureLive(cam) {
       consumer.on("stop", () => { if (cam.live === s) stopLive(cam, "Kamera hat gestoppt"); });
     });
     consumer.on("budget", (notice) => {
-      // Akku-Budget: verlaengern, solange jemand zuschaut und die Hoechstdauer nicht erreicht ist
-      if (s.clients.size > 0 && Date.now() - s.startedAt < LIVE_MAX_MIN * 60_000) notice.extend();
+      // Akku-Budget: verlaengern, solange jemand zuschaut (oder vorgestartet ist) und die Hoechstdauer nicht erreicht ist
+      const wanted = s.clients.size > 0 || Date.now() < (s.prewarmUntil ?? 0);
+      if (wanted && Date.now() - s.startedAt < LIVE_MAX_MIN * 60_000) notice.extend();
     });
     await withTimeout(firstFrame, LIVE_START_TIMEOUT_MS, "Livestream-Start");
     s.maxTimer = setTimeout(() => stopLive(cam, `Hoechstdauer ${LIVE_MAX_MIN} min erreicht`), LIVE_MAX_MIN * 60_000);
@@ -505,6 +509,24 @@ async function ensureLive(cam) {
   } catch (e) {
     stopLive(cam, `Start fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`);
     throw e;
+  }
+}
+
+// Livestream ohne Zuschauer vorstarten (Person, Klingeln). Kommt bis PREWARM_S niemand, wird er gestoppt;
+// schaut jemand zu, gelten die normalen Regeln (Stopp 20 s nach dem letzten Zuschauer).
+async function prewarmLive(cam, reason) {
+  if (!PREWARM_S || !cam.sn) return;
+  const until = Date.now() + PREWARM_S * 1000;
+  if (cam.live) cam.live.prewarmUntil = Math.max(cam.live.prewarmUntil ?? 0, until);
+  else log(`${cam.name}: Livestream vorgestartet (${reason})`);
+  let s;
+  try { s = await ensureLive(cam); } catch { return; }
+  s.prewarmUntil = Math.max(s.prewarmUntil ?? 0, until);
+  if (s.clients.size === 0) {
+    clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => {
+      if (cam.live === s && s.clients.size === 0) stopLive(cam, "vorgestartet, niemand hat zugeschaut");
+    }, Math.max(0, s.prewarmUntil - Date.now()));
   }
 }
 
@@ -642,6 +664,8 @@ eufy.on("event", async (e) => {
   x.values.lastEvent = { name: e.eventName, at: new Date().toISOString() };
   if (x.kind === "doorbell" && e.eventName === "doorbellPress") {
     pub(`${BASE}/${x.slug}/ring`, "ON", false);
+    const bellCam = Object.values(state.cameras).find((c) => c.sn === x.sn);
+    if (bellCam) prewarmLive(bellCam, "Klingeln");
     try {
       const dev = await eufy.getDevice(x.sn);
       const cam = dev.camera?.();
@@ -676,6 +700,7 @@ eufy.on("event", async (e) => {
   const cam = Object.values(state.cameras).find((c) => c.sn && c.sn === e?.deviceSn);
   if (!cam) return;
   cam.lastEvent = { name: e.eventName, at: new Date().toISOString() };
+  if (PERSON_EVENTS.has(e.eventName)) prewarmLive(cam, "Person");
   // Nur-Live-Kameras: keine MQTT-Meldungen (das macht eufy-security-ws), aber das Ereignisbild als Standbild behalten
   if (!cam.liveOnly) {
     pub(`${BASE}/${cam.slug}/last_event`, e.eventName);

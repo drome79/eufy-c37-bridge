@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+- **Schneller Livestart im Ernstfall:** Bei **Person** oder **Klingeln** startet die Bridge den Livestream sofort und hält ihn
+  `prewarm_seconds` (Standard 45) bereit. Wer die Push-Nachricht antippt, muss nicht mehr 4–6 Sekunden aufs Aufwachen der
+  Kamera warten. Schaut niemand zu, stoppt der Stream danach wieder. `0` schaltet das ab.
+- README: Liste der unterstützten Eufy-Geräte.
+
 ## 0.11.1
 - **Behoben (`full_support`):** Die Türklingel bekam zwei „Ereignisbild“-Entitäten (am Kamera- und am Klingel-Gerät).
   Das Ereignisbild gibt es jetzt nur noch am Klingel-Gerät.

@@ -8,7 +8,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.11.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.12.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -90,6 +90,28 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
   `eufy-security-ws` ersetzen. Ohne die Option bleibt es bei „nur Livevideo“ für alle Kameras außer der C37.
 - **Schwenken (PTZ)** wird automatisch freigeschaltet, sobald das SDK es für die Kamera meldet
   (für die C37 ist das derzeit nicht der Fall).
+- **Schneller Livestart im Ernstfall** (Option `prewarm_seconds`, ab 0.12.0): Meldet eine Kamera eine **Person** oder
+  klingelt es, startet die Bridge den Livestream sofort und hält ihn 45 Sekunden bereit. Wer die Push-Nachricht antippt,
+  sieht das Livebild ohne die übliche Aufwachzeit der Kamera (sonst etwa 4–6 Sekunden).
+
+### Unterstützte Eufy-Geräte
+
+Welche Funktionen ein Gerät bekommt, richtet sich nach den Fähigkeiten, die das `eufy-sdk` für das Gerät meldet.
+Bisher im echten Betrieb gesehen:
+
+| Gerät | Modell | Was die Bridge liefert | Stand |
+|---|---|---|---|
+| eufyCam C37 | T814X, T814XS | Standbild, Livevideo (H.265 → H.264), Bewegung, Person, Akku, Lädt, WLAN-Signal, Ereignisbild, Schalter Kamera/Bewegungserkennung/Licht, „Live-Bild holen“ | getestet |
+| Video Doorbell (Akku) | T8213 | Livevideo, Klingeln, Ereignisbild; mit `full_support` zusätzlich Bewegung, Person, Akku, Schalter | Livevideo und Klingeln getestet |
+| Indoor Cam Pan & Tilt | T8410 | Livevideo, Schwenken links/rechts/hoch/runter; mit `full_support` zusätzlich Bewegung, Person, Schalter | getestet (am Netzteil und an der HomeBase) |
+| HomeBase 3 | T8030 | Alarmpanel Zuhause / Abwesend / Deaktiviert, Sensor „Modus (Eufy)“ | getestet |
+| Türsensor (Entry Sensor) | T8900 | Tür offen/zu, Akku | getestet |
+| Keypad | T8960 | Lädt, Funksignal | getestet |
+| weitere Akku-Kameras | T8140-Z, T8142-R | als Kamera erkannt, Livevideo; mit `full_support` Sensoren und Schalter | erkannt, Funktionen noch nicht bestätigt |
+
+**Andere Eufy-Geräte** werden ebenfalls angezeigt, sobald das SDK sie kennt: Jede Kamera bekommt mindestens das Livevideo,
+Stationen mit Alarmmodus ein Alarmpanel, Kontaktsensoren offen/zu, Klingeln das Klingel-Signal. Bewusst **nicht** angeboten
+werden Sirenen. Schlösser, Paketboxen (SmartDrop), Staubsauger und andere Gerätearten unterstützt die Bridge nicht.
 
 ### Optionen
 
@@ -102,6 +124,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 | `refresh_minutes` | `30` | Alle wie viele Minuten ein frisches Bild geholt wird (`0` = nie) |
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |
 | `live_max_minutes` | `5` | Längster Livestream am Stück (Akku) |
+| `prewarm_seconds` | `45` | Bei Person oder Klingeln den Livestream so viele Sekunden vorstarten, damit er beim Öffnen sofort läuft (`0` = aus). Kostet pro Ereignis etwas Akku. |
 | `transcode_height` | `1080` | Bildhöhe, wenn H.265 nach H.264 umgewandelt wird |
 | `port` | `8099` | HTTP-Port der Bridge |
 | `captcha_answer`, `verify_code` | – | Nur nötig, wenn Eufy bei der Anmeldung ein Captcha oder einen Code verlangt |

@@ -1,5 +1,5 @@
 name: Eufy C37 Bridge
-version: "0.11.1"
+version: "0.12.0"
 slug: eufy_c37_bridge
 description: Bilder der eufyCam C37 über das eufy-sdk für Home Assistant (Generic Camera)
 url: https://github.com/drome79/eufy-c37-bridge
@@ -26,6 +26,7 @@ options:
   refresh_minutes: 30
   min_live_interval_minutes: 10
   live_max_minutes: 5
+  prewarm_seconds: 45
   port: 8099
   captcha_answer: ""
   verify_code: ""
@@ -39,6 +40,7 @@ schema:
   refresh_minutes: int(0,1440)
   min_live_interval_minutes: int(1,1440)
   live_max_minutes: int(1,60)?
+  prewarm_seconds: int(0,300)?
   transcode_height: int(360,2160)?
   extra_devices: bool?
   port: port
