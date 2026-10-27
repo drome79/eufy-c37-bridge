@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2
+- **Behoben (richtig):** Kein Livebild von der Türklingel. 0.12.1 reichte nicht: Die Bilder vor dem ersten Schlüsselbild
+  meldet das SDK mit einem geratenen Codec (bei der T8213 H.265, tatsächlich H.264). Die Bridge startet ffmpeg jetzt erst mit
+  dem ersten Schlüsselbild und dessen Codec; die Bilder davor (ohnehin nicht dekodierbar) werden verworfen.
+
 ## 0.12.1
 - **Behoben:** Kein Livebild von der Türklingel (T8213). Das SDK meldet ihr erstes Bild als H.265, alle folgenden als H.264;
   die Bridge legte die Umwandlung nach dem ersten Bild fest, ffmpeg bekam dann H.264 als H.265 und lieferte kein Video.

@@ -22,7 +22,6 @@ const LIVE_TIMEOUT_MS = 75_000;
 const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Livestream am Stueck
 const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
 const LIVE_START_TIMEOUT_MS = 45_000;
-const CODEC_PROBE_FRAMES = 5; // so viele Bilder abwarten, bevor der Codec feststeht (~0,3 s)
 const BASE = "eufy_c37";
 // Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
 // Standard aus, damit Installationen, die daneben eufy-security-ws nutzen, keine doppelten Entitaeten bekommen.
@@ -485,25 +484,26 @@ async function ensureLive(cam) {
     // Akku-Kameras bekommen ein Strom-Budget, Kameras mit Netzteil (z. B. Innenkameras) streamen unbegrenzt
     const consumer = await liveFn({ powered: cam.caps.includes("battery") ? "battery" : "wired" });
     s.consumer = consumer;
-    // Codec erst nach den ersten Bildern festlegen: Die Tuerklingel (T8213) meldet das erste Bild als H.265,
-    // alle folgenden als H.264. Entscheidend ist die Mehrheit; die gepufferten Bilder gehen alle an ffmpeg.
-    const pending = [];
+    // Erst ab dem ersten Schluesselbild (IDR) starten: Laut SDK stimmt die Codec-Angabe erst ab dem ersten
+    // Keyframe; davor wird geraten. Die Tuerklingel (T8213) meldet die Bilder davor als H.265, sendet aber H.264.
+    // Bilder vor dem ersten Keyframe sind ohnehin nicht dekodierbar und werden verworfen.
+    let skipped = 0;
     const firstFrame = new Promise((resolve, reject) => {
       consumer.on("video", (frame) => {
         if (cam.live !== s) return;
         if (!s.ff) {
-          pending.push(frame);
-          if (pending.length < CODEC_PROBE_FRAMES) return;
-          const count = {};
-          for (const f of pending) count[f.codec] = (count[f.codec] ?? 0) + 1;
-          const codec = Object.keys(count).sort((x, y) => count[y] - count[x])[0];
-          if (Object.keys(count).length > 1) log(`${cam.name}: uneinheitliche Codec-Angaben ${JSON.stringify(count)} – nehme ${codec}`);
-          startFfmpeg(cam, s, codec);
-          for (const f of pending.splice(0)) { try { s.ff.stdin.write(f.data); } catch {} }
+          // Sicherheitsnetz: meldet eine Kamera nie ein Schluesselbild, nach ~4 s trotzdem starten
+          if (!frame.keyframe && skipped < 60) { skipped++; return; }
+          startFfmpeg(cam, s, frame.codec);
+          if (skipped) log(`${cam.name}: ${skipped} Bilder vor dem ersten Schluesselbild verworfen`);
+          try { s.ff.stdin.write(frame.data); } catch {}
           resolve();
           return;
         }
-        if (frame.codec !== s.codec && !s.codecWarned) { s.codecWarned = true; log(`${cam.name}: Codec-Angabe ${frame.codec} weicht ab (Stream laeuft als ${s.codec})`); }
+        if (frame.keyframe && frame.codec !== s.codec && !s.codecWarned) {
+          s.codecWarned = true;
+          log(`${cam.name}: Schluesselbild mit Codec ${frame.codec}, Stream laeuft als ${s.codec}`);
+        }
         try { s.ff.stdin.write(frame.data); } catch {}
       });
       consumer.on("error", (e) => { reject(e); if (cam.live === s) stopLive(cam, `Fehler: ${String(e?.message ?? e).slice(0, 120)}`); });
