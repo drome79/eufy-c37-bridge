@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.3
+- **Behoben:** Kein Livebild von der Türklingel (T8213), dritter Anlauf. Die Klingel liefert zwei Codecs: ein H.265-Schlüsselbild
+  zu Beginn und ~0,5 s später H.264-Schlüsselbilder. Kommt in den ersten 3 s ein Schlüsselbild mit anderem Codec, stellt die
+  Bridge einmalig darauf um und gibt danach nur noch Bilder dieses Codecs an ffmpeg. Andere Kameras starten unverändert schnell.
+- Liefert eine Kamera mehrere Codecs, steht beim Stoppen eine Zählung (Bilder/Schlüsselbilder je Codec) im Protokoll.
+
 ## 0.12.2
 - **Behoben (richtig):** Kein Livebild von der Türklingel. 0.12.1 reichte nicht: Die Bilder vor dem ersten Schlüsselbild
   meldet das SDK mit einem geratenen Codec (bei der T8213 H.265, tatsächlich H.264). Die Bridge startet ffmpeg jetzt erst mit
