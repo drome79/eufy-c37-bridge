@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0
+- **Neu:** Das Alarmpanel der HomeBase kann auch **Bypass**. Bypass schaltet auf den Eufy-Modus **Custom 1**
+  (das SDK bestätigt diesen Modus für `setMode`). Angezeigt wurden Custom 1–3, Zeitplan und Geofencing schon vorher als Bypass.
+
 ## 0.12.2
 - **Behoben (richtig):** Kein Livebild von der Türklingel. 0.12.1 reichte nicht: Die Bilder vor dem ersten Schlüsselbild
   meldet das SDK mit einem geratenen Codec (bei der T8213 H.265, tatsächlich H.264). Die Bridge startet ffmpeg jetzt erst mit

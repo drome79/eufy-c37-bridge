@@ -575,7 +575,8 @@ const ARMING_WIRE = { 0: "away", 1: "home", 2: "schedule", 3: "custom1", 4: "cus
 // Name -> Zustand des HA-Alarmpanels
 const ARMING_HA = { home: "armed_home", away: "armed_away", disarmed: "disarmed", off: "disarmed",
   schedule: "armed_custom_bypass", custom1: "armed_custom_bypass", custom2: "armed_custom_bypass", custom3: "armed_custom_bypass", geofence: "armed_custom_bypass" };
-const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", DISARM: "disarmed" };
+// "Bypass" im HA-Alarmpanel schaltet auf den Eufy-Modus Custom 1
+const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", ARM_CUSTOM_BYPASS: "custom1", DISARM: "disarmed" };
 
 // Entitaeten eines nicht (mehr) ausgewaehlten weiteren Geraets aus Home Assistant entfernen
 function unpublishExtra(slug) {
@@ -609,8 +610,8 @@ function publishExtraDiscovery(x) {
   const t = `${BASE}/${x.slug}`;
   if (x.kind === "station") {
     cfg("alarm_control_panel", "alarm", { name: "Alarmmodus", state_topic: `${t}/alarm`, command_topic: `${t}/alarm/set`,
-      payload_arm_home: "ARM_HOME", payload_arm_away: "ARM_AWAY", payload_disarm: "DISARM",
-      code_arm_required: false, code_disarm_required: false, supported_features: ["arm_home", "arm_away"] });
+      payload_arm_home: "ARM_HOME", payload_arm_away: "ARM_AWAY", payload_arm_custom_bypass: "ARM_CUSTOM_BYPASS", payload_disarm: "DISARM",
+      code_arm_required: false, code_disarm_required: false, supported_features: ["arm_home", "arm_away", "arm_custom_bypass"] });
     cfg("sensor", "mode", { name: "Modus (Eufy)", state_topic: `${t}/mode`, icon: "mdi:shield-home", entity_category: "diagnostic" });
   }
   if (x.kind === "contact") {
