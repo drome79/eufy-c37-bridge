@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0
+- **Geräteauswahl zum Anhaken:** „Benutzeroberfläche öffnen“ (oder „Eufy Bridge“ in der Seitenleiste) zeigt alle Geräte
+  des Eufy-Kontos mit Typ und Modell. Speichern schreibt die Auswahl in `cameras` und startet die Bridge neu –
+  Namen muss man nicht mehr abtippen. Das Feld `cameras` in der Konfiguration funktioniert weiterhin.
+
 ## 0.9.0
 - Keypad (z. B. T8960): Sensoren „Lädt“ und „Signal“, wenn sein Name unter `cameras` eingetragen ist.
   Mehr liefert das SDK für das Keypad nicht; Moduswechsel am Keypad zeigt das Alarmpanel der HomeBase.

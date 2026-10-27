@@ -576,10 +576,93 @@ eufy.on("event", async (e) => {
   }
 });
 
+// --- Geraeteauswahl (Ingress-Seite) -------------------------------------------------------------
+// Zeigt alle Geraete des Eufy-Kontos zum Anhaken und schreibt die Auswahl ueber die Supervisor-API
+// in die Option "cameras"; danach startet das Add-on neu.
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function deviceKind(d) {
+  const caps = d.capabilities || [];
+  if (d.c37) return "Kamera (C37)";
+  if (caps.includes("doorbell")) return "Türklingel";
+  if (d.camera) return "Kamera";
+  if (caps.includes("contact")) return "Türsensor";
+  if (caps.includes("keypad")) return "Keypad";
+  if (caps.includes("arming")) return "HomeBase / Station";
+  return "Sonstiges (wird nicht eingebunden)";
+}
+
+function selectionPage() {
+  const byName = new Map();
+  for (const d of state.accountDevices) {
+    const e = byName.get(d.name) ?? { name: d.name, kinds: [], models: [], selected: false };
+    e.kinds.push(deviceKind(d)); e.models.push(d.model); e.selected ||= d.selected;
+    byName.set(d.name, e);
+  }
+  const rows = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, "de")).map((e) =>
+    `<label class="row"><input type="checkbox" name="cam" value="${esc(e.name)}"${e.selected ? " checked" : ""}>` +
+    `<span class="name">${esc(e.name)}</span><span class="kind">${esc([...new Set(e.kinds)].join(" + "))} · ${esc(e.models.join(", "))}</span></label>`).join("");
+  const body = state.accountDevices.length ? `<form id="f">${rows}<button type="submit">Speichern und neu starten</button><p id="msg"></p></form>`
+    : `<p>Noch keine Geräte bekannt (Anmeldung: ${esc(state.login)} ${esc(state.loginInfo)}). Bitte später neu laden.</p>`;
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eufy Bridge – Geräte</title><style>
+:root{color-scheme:light dark;--bg:#fafafa;--fg:#212121;--muted:#727272;--card:#fff;--line:#e0e0e0;--accent:#03a9f4}
+@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#e1e1e1;--muted:#9b9b9b;--card:#1c1c1c;--line:#333}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif}
+main{max-width:640px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}p.hint{color:var(--muted);margin:0 0 16px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer}
+.row input{width:20px;height:20px}.name{font-weight:600}.kind{color:var(--muted);font-size:14px;flex-basis:100%;padding-left:32px}
+button{margin-top:8px;padding:10px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;cursor:pointer}
+button:disabled{opacity:.6}#msg{min-height:1.4em}
+</style></head><body><main><h1>Eufy-Geräte auswählen</h1>
+<p class="hint">Alle Geräte aus deinem Eufy-Konto. Angehakte Geräte liefert die Bridge an Home Assistant. Ein Name gilt für alle Geräte gleichen Namens.</p>
+${body}</main><script>
+const f=document.getElementById("f");
+if(f)f.addEventListener("submit",async(ev)=>{ev.preventDefault();const b=f.querySelector("button"),m=document.getElementById("msg");
+b.disabled=true;m.textContent="Speichere …";
+try{const r=await fetch("auswahl",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cameras:[...f.querySelectorAll("input[name=cam]:checked")].map(i=>i.value)})});
+const t=await r.text();if(!r.ok)throw new Error(t);m.textContent="Gespeichert. Die Bridge startet neu – Seite in etwa einer Minute neu laden.";}
+catch(e){m.textContent="Fehler: "+e.message;b.disabled=false;}});
+</script></body></html>`;
+}
+
+async function supervisor(method, endpoint, body) {
+  const r = await fetch(`http://supervisor${endpoint}`, {
+    method, headers: { authorization: `Bearer ${process.env.SUPERVISOR_TOKEN}`, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`Supervisor ${endpoint}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+}
+
+async function saveSelection(req, res) {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  const names = JSON.parse(raw || "{}").cameras;
+  if (!Array.isArray(names) || names.some((n) => typeof n !== "string")) { res.writeHead(400); return res.end("ungueltige Auswahl"); }
+  // aktuelle Optionen frisch lesen, nur "cameras" ersetzen
+  const current = JSON.parse(fs.readFileSync(OPTIONS_PATH, "utf8").replace(/^﻿/, ""));
+  await supervisor("POST", "/addons/self/options", { options: { ...current, cameras: names } });
+  log(`Geraeteauswahl gespeichert: ${names.join(", ") || "(leer)"} – starte neu`);
+  res.writeHead(200); res.end("ok");
+  setTimeout(() => supervisor("POST", "/addons/self/restart").catch((e) => log(`Neustart fehlgeschlagen: ${e.message}`)), 1000);
+}
+
 // --- HTTP-Schnittstelle fuer Home Assistant ----------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
+  // Ingress (Home-Assistant-Oberflaeche) kommt immer vom Supervisor 172.30.32.2
+  const fromIngress = String(req.socket.remoteAddress ?? "").endsWith("172.30.32.2");
+  if (fromIngress && url.pathname === "/") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    return res.end(selectionPage());
+  }
+  if (url.pathname === "/auswahl" && req.method === "POST") {
+    if (!fromIngress) { res.writeHead(403); return res.end("nur ueber die Home-Assistant-Oberflaeche"); }
+    try { return await saveSelection(req, res); }
+    catch (e) { res.writeHead(500); return res.end(String(e?.message ?? e)); }
+  }
   const pm = url.pathname.match(/^\/ptz\/([a-z0-9_]+)\/(left|right|up|down)$/);
   if (pm) {
     const cam = state.cameras[pm[1]];

@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.9.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.10.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -51,6 +51,8 @@ unabhängig davon und kann parallel dazu laufen.
    lässt sie einfach stehen: GitHub leitet sie weiter, Updates kommen weiterhin an. Bitte die Adresse in
    Home Assistant **nicht** austauschen, sonst gilt das Add-on als neu und muss neu eingerichtet werden.
 3. Im Store erscheint **Eufy C37 Bridge**. Installieren, in der **Konfiguration** E-Mail und Passwort des Eufy-Kontos eintragen, speichern, starten.
+4. **Geräte auswählen:** Am Add-on **„Benutzeroberfläche öffnen“** (oder **Eufy Bridge** in der Seitenleiste). Dort stehen alle
+   Geräte des Eufy-Kontos mit Typ und Modell zum Anhaken. **Speichern und neu starten** trägt sie unter `cameras` ein.
 
 ---
 
@@ -86,7 +88,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 |---|---|---|
 | `email`, `password` | – | Eufy-Konto. Empfohlen: ein eigenes Konto, in der Eufy-App als Gast freigegeben. |
 | `country` | `DE` | Land des Eufy-Kontos |
-| `cameras` | leer | **Gerätenamen wie in der Eufy-App.** Die Bridge liefert nur, was hier steht: Kameras ebenso wie HomeBase, Türsensoren und Türklingel. Ohne Eintrag liefert sie nichts. Welche Geräte es im Konto gibt, zeigen Statusseite und Protokoll nach dem Start. Ein Name gilt für alle Geräte gleichen Namens. |
+| `cameras` | leer | **Gerätenamen wie in der Eufy-App.** Die Bridge liefert nur, was hier steht: Kameras ebenso wie HomeBase, Türsensoren und Türklingel. Ohne Eintrag liefert sie nichts. Am einfachsten über die Auswahlseite („Benutzeroberfläche öffnen“) anhaken statt abtippen. Ein Name gilt für alle Geräte gleichen Namens. |
 | `refresh_minutes` | `30` | Alle wie viele Minuten ein frisches Bild geholt wird (`0` = nie) |
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |
 | `live_max_minutes` | `5` | Längster Livestream am Stück (Akku) |
