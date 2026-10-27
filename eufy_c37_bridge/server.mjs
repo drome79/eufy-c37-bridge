@@ -22,6 +22,14 @@ const LIVE_TIMEOUT_MS = 75_000;
 const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Livestream am Stueck
 const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
 const LIVE_START_TIMEOUT_MS = 45_000;
+// Kameras, die beim Start zwei Codecs liefern (Tuerklingel), merken sich den eigentlichen Codec ueber Neustarts hinweg
+const CODECS_FILE = path.join(DATA, "codecs.json");
+const preferredCodec = (() => { try { return JSON.parse(fs.readFileSync(CODECS_FILE, "utf8")); } catch { return {}; } })();
+function rememberCodec(cam, codec) {
+  if (preferredCodec[cam.slug] === codec) return;
+  preferredCodec[cam.slug] = codec;
+  try { fs.writeFileSync(CODECS_FILE, JSON.stringify(preferredCodec)); } catch {}
+}
 const CODEC_SWITCH_MS = 3_000; // so lange nach dem Start darf ein Schluesselbild mit anderem Codec noch umstellen
 const BASE = "eufy_c37";
 // Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
@@ -462,6 +470,9 @@ function startFfmpeg(cam, s, codec) {
   const args = [
     "-hide_banner", "-loglevel", "error",
     "-fflags", "+genpts+nobuffer", "-use_wallclock_as_timestamps", "1",
+    // Kurz analysieren: Groesse und Codec stehen im ersten Schluesselbild. Mit den Standardwerten wartete ffmpeg
+    // bei niedriger Datenrate (Tuerklingel nachts ~120 kbit/s) gut 4 s, bevor es etwas ausgab.
+    "-probesize", "32768", "-analyzeduration", "0",
     "-f", codec === "h265" ? "hevc" : "h264", "-i", "pipe:0",
     ...video, "-an",
     "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1",
@@ -501,6 +512,9 @@ async function ensureLive(cam) {
         if (!s.ff) {
           // Sicherheitsnetz: meldet eine Kamera nie ein Schluesselbild, nach ~4 s trotzdem starten
           if (!frame.keyframe && skipped < 60) { skipped++; return; }
+          // Bekannter eigentlicher Codec (z. B. Tuerklingel H.264): Schluesselbilder des anderen Codecs ueberspringen
+          const want = preferredCodec[cam.slug];
+          if (want && frame.codec !== want && skipped < 60) { skipped++; return; }
           startFfmpeg(cam, s, frame.codec);
           s.ffStartedAt = Date.now();
           if (skipped) log(`${cam.name}: ${skipped} Bilder vor dem ersten Schluesselbild verworfen`);
@@ -511,7 +525,8 @@ async function ensureLive(cam) {
         if (frame.codec !== s.codec) {
           if (frame.keyframe && !s.codecSwitched && Date.now() - s.ffStartedAt < CODEC_SWITCH_MS) {
             s.codecSwitched = true;
-            log(`${cam.name}: Schluesselbild mit ${frame.codec} – stelle von ${s.codec} um`);
+            log(`${cam.name}: Schluesselbild mit ${frame.codec} – stelle von ${s.codec} um (gemerkt fuer den naechsten Start)`);
+            rememberCodec(cam, frame.codec);
             const old = s.ff;
             old.removeAllListeners("exit");
             try { old.stdin.end(); old.kill("SIGKILL"); } catch {}
