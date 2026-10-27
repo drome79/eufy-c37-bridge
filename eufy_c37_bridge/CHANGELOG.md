@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+- Klingelbild: wartet bis ~20 s auf das Push-Bild von Eufy und holt sonst ein frisches Bild von der (ohnehin wachen) Klingel.
+  Das Bild landet im „Ereignisbild“ und als Standbild der Kamera.
+
 ## 0.8.0
 - **Geändert:** Die Bridge liefert nur noch Geräte, deren Name unter `cameras` eingetragen ist – Kameras ebenso wie
   HomeBase, Türsensoren und Türklingel. Die automatische Erkennung entfällt; ohne Eintrag liefert die Bridge nichts.

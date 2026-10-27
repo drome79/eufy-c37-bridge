@@ -513,13 +513,25 @@ eufy.on("event", async (e) => {
     pub(`${BASE}/${x.slug}/ring`, "ON", false);
     try {
       const dev = await eufy.getDevice(x.sn);
-      const fn = dev.camera?.()?.snapshotStored;
-      if (typeof fn === "function") {
-        // Das Push-Bild kommt oft erst kurz nach dem Klingeln
-        for (let i = 0; i < 4; i++) {
-          await new Promise((r) => setTimeout(r, 1500));
-          try { const buf = await fn(); if (buf?.length) { if (mq?.connected) mq.publish(`${BASE}/${x.slug}/event_image`, buf, { retain: true }); break; } } catch {}
+      const cam = dev.camera?.();
+      let buf = null;
+      // 1) Push-Bild von Eufy: kommt oft erst einige Sekunden nach dem Klingeln (bis ~20 s abwarten)
+      if (typeof cam?.snapshotStored === "function") {
+        for (let i = 0; i < 8 && !buf; i++) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try { const b = await cam.snapshotStored(); if (b?.length) buf = b; } catch {}
         }
+      }
+      // 2) Kein Push-Bild: die Klingel ist nach dem Klingeln ohnehin wach -> frisches Bild holen
+      if (!buf && typeof cam?.snapshotLive === "function") {
+        try { const r = await withTimeout(cam.snapshotLive(), 45_000, "Klingelbild"); buf = r?.jpeg ?? null; }
+        catch (err) { log(`${x.name}: Klingelbild nicht verfuegbar (${String(err?.message ?? err).slice(0, 120)})`); }
+      }
+      if (buf?.length) {
+        if (mq?.connected) mq.publish(`${BASE}/${x.slug}/event_image`, buf, { retain: true });
+        const camEntry = Object.values(state.cameras).find((c) => c.sn === x.sn);
+        if (camEntry) store(camEntry, buf, "event:doorbellPress");
+        log(`${x.name}: Klingelbild weitergegeben (${buf.length} Bytes)`);
       }
     } catch {}
   }
