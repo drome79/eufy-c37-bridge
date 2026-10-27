@@ -4,7 +4,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.6.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.7.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -74,6 +74,9 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
   ansonsten weiter über `eufy-security-ws` laufen. Als Standbild hält die Bridge das letzte Ereignisbild (z. B. Klingeln)
   und ein Bild aus dem letzten Livestream vor. Kann die Kamera schwenken (z. B. Innenkamera T8410), bekommt sie
   die Knöpfe „Schwenken links/rechts/hoch/runter“ (Gerät „Eufy <Name>“).
+- **Weitere Eufy-Geräte** (Option `extra_devices`, Standard an), per MQTT:
+  HomeBase als **Alarmpanel** (Zuhause, Abwesend, Deaktiviert), **Türsensoren** (offen/zu, Akku) und die
+  **Türklingel** (Klingeln, Ereignisbild). Eine Sirene wird bewusst nicht angeboten.
 - **Schwenken (PTZ)** wird automatisch freigeschaltet, sobald das SDK es für die Kamera meldet
   (für die C37 ist das derzeit nicht der Fall).
 
@@ -88,6 +91,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |
 | `live_max_minutes` | `5` | Längster Livestream am Stück (Akku) |
 | `transcode_height` | `1080` | Bildhöhe, wenn H.265 nach H.264 umgewandelt wird |
+| `extra_devices` | `true` | HomeBase, Türsensoren und Türklingel zusätzlich per MQTT einbinden |
 | `port` | `8099` | HTTP-Port der Bridge |
 | `captcha_answer`, `verify_code` | – | Nur nötig, wenn Eufy bei der Anmeldung ein Captcha oder einen Code verlangt |
 

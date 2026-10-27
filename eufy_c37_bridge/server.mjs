@@ -34,7 +34,7 @@ const slugify = (s) =>
 const withTimeout = (p, ms, what) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: keine Antwort nach ${ms / 1000} s`)), ms))]);
 
-const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [] };
+const state = { login: "pending", loginInfo: "", mqtt: "aus", mode: "", cameras: {}, accountDevices: [], removed: [], extras: [] };
 
 // C37-Familie (eufyCam C37 = T814X / T814XS)
 const C37_MODEL = /^T814/i;
@@ -150,8 +150,17 @@ async function startMqtt() {
     for (const slug of state.removed) unpublishDiscovery(slug);
     mq.subscribe(`${BASE}/+/refresh`);
     mq.subscribe(`${BASE}/+/ptz`);
+    mq.subscribe(`${BASE}/+/alarm/set`);
+    for (const x of state.extras) { publishExtraDiscovery(x); x.values = {}; }
+    if (state.extras.length) refreshExtras();
   });
   mq.on("message", (topic, payload) => {
+    const am = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/alarm/set$`));
+    if (am) {
+      const x = state.extras.find((d) => d.slug === am[1] && d.kind === "station");
+      if (x) setArming(x, String(payload)).catch((e) => log(`${x.name}: Modus setzen fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`));
+      return;
+    }
     const m = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/(refresh|ptz)$`));
     const cam = m && state.cameras[m[1]];
     if (!cam) return;
@@ -215,6 +224,12 @@ async function login() {
     } catch {}
     state.accountDevices.push({ name: d.name, model: d.model, camera: hasCam, c37: C37_MODEL.test(d.model ?? ""), capabilities: caps });
     if (hasCam) cams.push(d);
+    // Weitere Geraete: HomeBase (Alarmmodus), Tuersensoren (offen/zu), Tuerklingel (Klingeln)
+    if (opts.extra_devices !== false) {
+      if (caps.includes("arming") && !hasCam) addExtra("station", d);
+      if (caps.includes("contact")) addExtra("contact", d);
+      if (caps.includes("doorbell")) addExtra("doorbell", d);
+    }
   }
   log(`Geraete im Konto: ${state.accountDevices.map((d) => `${d.name} (${d.model}${d.camera ? ", Kamera" : ""})`).join("; ")}`);
 
@@ -402,6 +417,114 @@ async function serveLive(cam, req, res) {
   log(`${cam.name}: Zuschauer verbunden (${s.clients.size})`);
 }
 
+// --- Weitere Geraete: HomeBase, Tuersensoren, Tuerklingel -------------------------------------
+// Alarmpanel fuer Stationen mit "arming", Kontakt-Sensoren fuer "contact", Klingel-Sensor + Ereignisbild fuer "doorbell".
+// Die Sirene wird bewusst NICHT angeboten.
+
+// Eufy-Guard-Modus: Wire-Wert -> Name
+const ARMING_WIRE = { 0: "away", 1: "home", 2: "schedule", 3: "custom1", 4: "custom2", 5: "custom3", 6: "off", 47: "geofence", 63: "disarmed" };
+// Name -> Zustand des HA-Alarmpanels
+const ARMING_HA = { home: "armed_home", away: "armed_away", disarmed: "disarmed", off: "disarmed",
+  schedule: "armed_custom_bypass", custom1: "armed_custom_bypass", custom2: "armed_custom_bypass", custom3: "armed_custom_bypass", geofence: "armed_custom_bypass" };
+const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", DISARM: "disarmed" };
+
+function addExtra(kind, rec) {
+  const slug = `${kind}_${slugify(rec.name) || "geraet"}`;
+  if (state.extras.find((x) => x.slug === slug)) return;
+  state.extras.push({ kind, slug, sn: rec.sn, name: rec.name, model: rec.model, values: {} });
+}
+
+async function readVal(obj, key) {
+  if (!obj) return undefined;
+  let v = obj[key];
+  if (typeof v === "function") v = await v.call(obj);
+  return v;
+}
+
+function extraDevice(x) {
+  return { identifiers: [`${BASE}_${x.slug}`], name: `Eufy ${x.name}`, manufacturer: "Eufy", model: x.model || "Eufy" };
+}
+
+function publishExtraDiscovery(x) {
+  const base = { availability_topic: `${BASE}/status`, device: extraDevice(x) };
+  const cfg = (component, key, body) => pub(`homeassistant/${component}/${BASE}_${x.slug}_${key}/config`,
+    JSON.stringify({ ...base, unique_id: `${BASE}_${x.slug}_${key}`, ...body }));
+  const t = `${BASE}/${x.slug}`;
+  if (x.kind === "station") {
+    cfg("alarm_control_panel", "alarm", { name: "Alarmmodus", state_topic: `${t}/alarm`, command_topic: `${t}/alarm/set`,
+      payload_arm_home: "ARM_HOME", payload_arm_away: "ARM_AWAY", payload_disarm: "DISARM",
+      code_arm_required: false, code_disarm_required: false, supported_features: ["arm_home", "arm_away"] });
+    cfg("sensor", "mode", { name: "Modus (Eufy)", state_topic: `${t}/mode`, icon: "mdi:shield-home", entity_category: "diagnostic" });
+  }
+  if (x.kind === "contact") {
+    cfg("binary_sensor", "contact", { name: "Tür", device_class: "door", state_topic: `${t}/contact` });
+    cfg("sensor", "battery", { name: "Akku", device_class: "battery", unit_of_measurement: "%", state_class: "measurement", state_topic: `${t}/battery`, entity_category: "diagnostic" });
+  }
+  if (x.kind === "doorbell") {
+    cfg("binary_sensor", "ring", { name: "Klingeln", icon: "mdi:doorbell", state_topic: `${t}/ring`, off_delay: 30 });
+    cfg("image", "event_image", { name: "Ereignisbild", image_topic: `${t}/event_image`, content_type: "image/jpeg" });
+  }
+}
+
+async function refreshExtra(x) {
+  try {
+    const dev = await eufy.getDevice(x.sn);
+    const t = `${BASE}/${x.slug}`;
+    if (x.kind === "station") {
+      let raw = await readVal(dev.arming?.(), "mode");
+      const name = typeof raw === "number" ? (ARMING_WIRE[raw] ?? `modus_${raw}`) : (raw != null ? String(raw) : undefined);
+      if (name && name !== x.values.mode) {
+        x.values.mode = name;
+        pub(`${t}/mode`, name);
+        pub(`${t}/alarm`, ARMING_HA[name] ?? "armed_custom_bypass");
+      }
+    }
+    if (x.kind === "contact") {
+      const open = await readVal(dev.contact?.(), "open");
+      if (typeof open === "boolean" && open !== x.values.open) { x.values.open = open; pub(`${t}/contact`, open ? "ON" : "OFF"); }
+      const bat = await readVal(dev.battery?.(), "level");
+      if (typeof bat === "number" && bat !== x.values.battery) { x.values.battery = bat; pub(`${t}/battery`, bat); }
+    }
+  } catch (e) {
+    x.values.error = String(e?.message ?? e).slice(0, 160);
+  }
+}
+
+async function refreshExtras() { for (const x of state.extras) await refreshExtra(x); }
+
+async function setArming(x, cmd) {
+  const mode = ARMING_CMD[cmd];
+  if (!mode) throw new Error(`unbekannter Befehl ${cmd}`);
+  const dev = await eufy.getDevice(x.sn);
+  const a = dev.arming?.();
+  if (typeof a?.setMode !== "function") throw new Error("Alarmmodus laesst sich laut SDK nicht setzen");
+  log(`${x.name}: setze Modus ${mode}`);
+  await withTimeout(a.setMode(mode), 30_000, "Modus setzen");
+  setTimeout(() => refreshExtra(x), 5_000);
+}
+
+// Ereignisse der weiteren Geraete: sofort nachlesen; Klingeln melden und das Ereignisbild weitergeben
+eufy.on("event", async (e) => {
+  const x = state.extras.find((d) => d.sn === e?.deviceSn);
+  if (!x) return;
+  x.values.lastEvent = { name: e.eventName, at: new Date().toISOString() };
+  if (x.kind === "doorbell" && e.eventName === "doorbellPress") {
+    pub(`${BASE}/${x.slug}/ring`, "ON", false);
+    try {
+      const dev = await eufy.getDevice(x.sn);
+      const fn = dev.camera?.()?.snapshotStored;
+      if (typeof fn === "function") {
+        // Das Push-Bild kommt oft erst kurz nach dem Klingeln
+        for (let i = 0; i < 4; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try { const buf = await fn(); if (buf?.length) { if (mq?.connected) mq.publish(`${BASE}/${x.slug}/event_image`, buf, { retain: true }); break; } } catch {}
+        }
+      }
+    } catch {}
+  }
+  if (x.kind !== "doorbell") refreshExtra(x);
+});
+
 // Ereignisse (Bewegung, Person ...): an MQTT melden und das Ereignisbild aus dem Push uebernehmen,
 // ohne die Kamera zu wecken
 const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
@@ -472,6 +595,7 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({
     login: state.login, info: state.loginInfo, mqtt: state.mqtt, camera_selection: state.mode,
     account_devices: state.accountDevices,
+    extra_devices: state.extras.map((x) => ({ name: x.name, kind: x.kind, model: x.model, values: x.values })),
     cameras: Object.values(state.cameras).map((c) => ({
       name: c.name, model: c.model, url: `/snapshot/${c.slug}.jpg`, connected: Boolean(c.sn),
       image_age_s: c.jpeg ? Math.round((Date.now() - c.ts) / 1000) : null, source: c.source,
@@ -496,6 +620,13 @@ async function refreshAll() {
 await startMqtt();
 try {
   if (await login()) {
+    // Weitere Geraete melden und alle 30 s nachlesen (zusaetzlich sofort bei Ereignissen)
+    if (state.extras.length) {
+      log(`Weitere Geraete: ${state.extras.map((x) => `${x.name} (${x.kind})`).join(", ")}`);
+      for (const x of state.extras) publishExtraDiscovery(x);
+      await refreshExtras();
+      setInterval(() => refreshExtras().catch(() => {}), 30_000);
+    }
     await refreshAll();
     if (REFRESH_MIN > 0) setInterval(() => refreshAll().catch((e) => log("Aktualisierung:", e.message)), REFRESH_MIN * 60_000);
   }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+- Weitere Eufy-Geräte per MQTT (Option `extra_devices`, Standard an):
+  - HomeBase und andere Stationen ohne Kamera: Alarmpanel „Alarmmodus“ (Zuhause, Abwesend, Deaktiviert) und Sensor „Modus (Eufy)“.
+  - Türsensoren: „Tür“ (offen/zu) und Akku.
+  - Türklingel: „Klingeln“ und „Ereignisbild“.
+- Zustände werden alle 30 s und bei Ereignissen nachgelesen. Eine Sirene wird bewusst nicht angeboten.
+
 ## 0.6.1
 - Statusseite zeigt die Fähigkeiten aller Geräte im Eufy-Konto (z. B. HomeBase, Türsensoren), nicht nur der eingebundenen Kameras.
 
