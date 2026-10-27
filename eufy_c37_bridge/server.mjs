@@ -22,6 +22,7 @@ const LIVE_TIMEOUT_MS = 75_000;
 const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Livestream am Stueck
 const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
 const LIVE_START_TIMEOUT_MS = 45_000;
+const CODEC_SWITCH_MS = 3_000; // so lange nach dem Start darf ein Schluesselbild mit anderem Codec noch umstellen
 const BASE = "eufy_c37";
 // Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
 // Standard aus, damit Installationen, die daneben eufy-security-ws nutzen, keine doppelten Entitaeten bekommen.
@@ -447,7 +448,8 @@ function stopLive(cam, reason) {
   try { s.ff?.stdin.end(); s.ff?.kill("SIGKILL"); } catch {}
   for (const res of s.clients) { try { res.end(); } catch {} }
   s.clients.clear();
-  log(`${cam.name}: Livestream beendet (${reason})`);
+  const stats = s.stats && Object.keys(s.stats).length > 1 ? `, Bilder je Codec: ${JSON.stringify(s.stats)}` : "";
+  log(`${cam.name}: Livestream beendet (${reason})${stats}`);
 }
 
 function startFfmpeg(cam, s, codec) {
@@ -484,25 +486,39 @@ async function ensureLive(cam) {
     // Akku-Kameras bekommen ein Strom-Budget, Kameras mit Netzteil (z. B. Innenkameras) streamen unbegrenzt
     const consumer = await liveFn({ powered: cam.caps.includes("battery") ? "battery" : "wired" });
     s.consumer = consumer;
-    // Erst ab dem ersten Schluesselbild (IDR) starten: Laut SDK stimmt die Codec-Angabe erst ab dem ersten
-    // Keyframe; davor wird geraten. Die Tuerklingel (T8213) meldet die Bilder davor als H.265, sendet aber H.264.
-    // Bilder vor dem ersten Keyframe sind ohnehin nicht dekodierbar und werden verworfen.
+    // Erst ab dem ersten Schluesselbild (IDR) starten: Laut SDK stimmt die Codec-Angabe erst ab einem Keyframe.
+    // Die Tuerklingel (T8213) liefert zwei Codecs: zuerst ein H.265-Schluesselbild, ~0,5 s spaeter H.264-Schluesselbilder.
+    // Kommt in den ersten CODEC_SWITCH_MS ein Schluesselbild mit anderem Codec, wird einmalig umgestellt; danach
+    // gehen nur noch Bilder dieses Codecs an ffmpeg. Die Zaehlung je Codec steht beim Stoppen im Protokoll.
     let skipped = 0;
+    s.stats = {};
     const firstFrame = new Promise((resolve, reject) => {
       consumer.on("video", (frame) => {
         if (cam.live !== s) return;
+        const st = (s.stats[frame.codec] ??= { bilder: 0, schluesselbilder: 0 });
+        st.bilder++;
+        if (frame.keyframe) st.schluesselbilder++;
         if (!s.ff) {
           // Sicherheitsnetz: meldet eine Kamera nie ein Schluesselbild, nach ~4 s trotzdem starten
           if (!frame.keyframe && skipped < 60) { skipped++; return; }
           startFfmpeg(cam, s, frame.codec);
+          s.ffStartedAt = Date.now();
           if (skipped) log(`${cam.name}: ${skipped} Bilder vor dem ersten Schluesselbild verworfen`);
           try { s.ff.stdin.write(frame.data); } catch {}
           resolve();
           return;
         }
-        if (frame.keyframe && frame.codec !== s.codec && !s.codecWarned) {
-          s.codecWarned = true;
-          log(`${cam.name}: Schluesselbild mit Codec ${frame.codec}, Stream laeuft als ${s.codec}`);
+        if (frame.codec !== s.codec) {
+          if (frame.keyframe && !s.codecSwitched && Date.now() - s.ffStartedAt < CODEC_SWITCH_MS) {
+            s.codecSwitched = true;
+            log(`${cam.name}: Schluesselbild mit ${frame.codec} – stelle von ${s.codec} um`);
+            const old = s.ff;
+            old.removeAllListeners("exit");
+            try { old.stdin.end(); old.kill("SIGKILL"); } catch {}
+            startFfmpeg(cam, s, frame.codec);
+            try { s.ff.stdin.write(frame.data); } catch {}
+          }
+          return; // Bilder des anderen Codecs nicht an ffmpeg geben
         }
         try { s.ff.stdin.write(frame.data); } catch {}
       });
