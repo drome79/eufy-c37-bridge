@@ -10,6 +10,8 @@ In Home Assistant bindet man jede Kamera als **Generic Camera** mit der Bild-Adr
 - `cameras`: Gerätenamen wie in der Eufy-App. Die Bridge liefert nur diese Geräte (Kameras, HomeBase,
   Türsensoren, Türklingel). Ohne Eintrag liefert sie nichts. Alle Geräte des Kontos stehen nach dem Start
   im Protokoll und auf der Statusseite.
+- `full_support`: alle ausgewählten Kameras voll einbinden (MQTT-Entitäten, Schalter, Ereignisbild), nicht nur die C37.
+  Für Installationen ohne `eufy-security-ws`. Andere Kameras als die C37 werden dabei nie von selbst geweckt.
 - `refresh_minutes`: Alle wie viele Minuten ein frisches Live-Bild geholt wird (0 = nie, nur bei Ereignissen).
 - `min_live_interval_minutes`: Mindestabstand zwischen zwei Live-Bildern pro Kamera (Akku).
 - `port`: HTTP-Port (Standard 8099).

@@ -8,7 +8,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.10.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.11.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -83,6 +83,11 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 - **Weitere Eufy-Geräte** (wenn ihr Name unter `cameras` eingetragen ist), per MQTT:
   HomeBase als **Alarmpanel** (Zuhause, Abwesend, Deaktiviert), **Türsensoren** (offen/zu, Akku) und die
   **Türklingel** (Klingeln, Ereignisbild) und das **Keypad** (lädt, Signal). Eine Sirene wird bewusst nicht angeboten.
+- **Alle Kameras voll einbinden** (Option `full_support`, ab 0.11.0): Jede ausgewählte Kamera bekommt die MQTT-Entitäten
+  der C37, dazu – sofern die Kamera es laut SDK kann – die Schalter **Kamera eingeschaltet**, **Bewegungserkennung** und
+  **Licht**, das **Ereignisbild**, **WLAN-Signal**, bei Akku-Kameras **Akku** und **Lädt**, sowie **Haustier**, **Geräusch**,
+  **Weinen** und **Fahrzeug**, sobald die Kamera so ein Ereignis zum ersten Mal meldet. Damit kann die Bridge
+  `eufy-security-ws` ersetzen. Ohne die Option bleibt es bei „nur Livevideo“ für alle Kameras außer der C37.
 - **Schwenken (PTZ)** wird automatisch freigeschaltet, sobald das SDK es für die Kamera meldet
   (für die C37 ist das derzeit nicht der Fall).
 
@@ -92,6 +97,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
 |---|---|---|
 | `email`, `password` | – | Eufy-Konto. Empfohlen: ein eigenes Konto, in der Eufy-App als Gast freigegeben. |
 | `country` | `DE` | Land des Eufy-Kontos |
+| `full_support` | `false` | **Alle** ausgewählten Kameras voll einbinden (MQTT-Entitäten wie bei der C37, siehe unten) statt nur Livevideo. Für Installationen ohne `eufy-security-ws`. Andere Kameras als die C37 werden dabei trotzdem nie von selbst geweckt. |
 | `cameras` | leer | **Gerätenamen wie in der Eufy-App.** Die Bridge liefert nur, was hier steht: Kameras ebenso wie HomeBase, Türsensoren und Türklingel. Ohne Eintrag liefert sie nichts. Am einfachsten über die Auswahlseite („Benutzeroberfläche öffnen“) anhaken statt abtippen. Ein Name gilt für alle Geräte gleichen Namens. |
 | `refresh_minutes` | `30` | Alle wie viele Minuten ein frisches Bild geholt wird (`0` = nie) |
 | `min_live_interval_minutes` | `10` | Mindestabstand zwischen zwei frischen Bildern pro Kamera (Akku) |

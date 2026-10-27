@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.0
+- **Neue Option `full_support`** (Standard aus): bindet **alle** ausgewählten Eufy-Kameras voll ein, nicht nur die C37.
+  Sie bekommen dieselben MQTT-Entitäten wie die C37 statt nur Livevideo. Gedacht für Installationen ohne `eufy-security-ws`;
+  wer beides parallel nutzt, lässt die Option aus und behält das bisherige Verhalten.
+- Neue Entitäten je voll eingebundener Kamera (auch C37), jeweils nur wenn die Kamera es laut SDK kann:
+  - Schalter **Kamera eingeschaltet**, **Bewegungserkennung** und **Licht** (Kameras mit Scheinwerfer)
+  - **Ereignisbild** (Bild aus der Eufy-Push-Nachricht als `image`-Entität)
+  - **WLAN-Signal**, bei Akku-Kameras zusätzlich **Lädt**
+  - **Haustier**, **Geräusch**, **Weinen**, **Fahrzeug**: werden angelegt, sobald die Kamera so ein Ereignis zum ersten Mal meldet
+- Akku-Sensor nur noch bei Kameras mit Akku (Innenkameras mit Netzteil bekommen keinen leeren Akku-Sensor mehr).
+- Schalter, Akku und Signal werden jede Minute aus den gepufferten Werten nachgelesen; das weckt keine Kamera.
+- Von selbst geweckt (`refresh_minutes`) wird weiterhin nur die C37. Alle anderen Kameras liefern Bilder aus Ereignissen
+  und Livestreams oder auf ausdrücklichen Abruf („Live-Bild holen“, `/refresh/<name>`).
+
 ## 0.10.1
 - **Behoben:** Andere Akku-Kameras, deren Modell mit „T814“ beginnt (z. B. T8140-Z, T8142-R), wurden fälschlich als C37
   erkannt. Sie bekamen MQTT-Entitäten und wurden alle `refresh_minutes` für ein frisches Bild geweckt (Akku, Fehlermeldungen

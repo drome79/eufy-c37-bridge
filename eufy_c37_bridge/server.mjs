@@ -23,6 +23,10 @@ const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Live
 const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
 const LIVE_START_TIMEOUT_MS = 45_000;
 const BASE = "eufy_c37";
+// Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
+// Standard aus, damit Installationen, die daneben eufy-security-ws nutzen, keine doppelten Entitaeten bekommen.
+const FULL_SUPPORT = Boolean(opts.full_support);
+const STATE_POLL_MS = 60_000; // Schalter, Akku, Signal der Kameras nachlesen (gepufferte Werte, weckt nicht)
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -53,7 +57,7 @@ function addCamera(name) {
     source: ts ? "cache" : null,
     // ein frisches Bild aus dem Cache zaehlt als letzter Live-Versuch -> nach Neustart nicht sofort wecken
     lastLiveTry: ts, busy: null, lastError: null, lastEvent: null, battery: null, live: null,
-    caps: [], ptz: false,
+    caps: [], ptz: false, c37: false, values: {}, eventKinds: new Set(),
   };
   state.cameras[slug] = cam;
   return cam;
@@ -86,27 +90,127 @@ function deviceInfo(cam) {
   };
 }
 
+// Entitaets-IDs: c37_<name>_... wie bisher fuer die C37, eufy_<name>_... fuer alle anderen Kameras
+const objectPrefix = (cam) => (cam.c37 ? "c37" : "eufy");
+
 function publishDiscovery(cam) {
   const dev = deviceInfo(cam);
   const common = { availability_topic: `${BASE}/status`, device: dev };
   const cfg = (component, key, body) =>
     pub(`homeassistant/${component}/${BASE}_${cam.slug}_${key}/config`,
-      JSON.stringify({ ...common, unique_id: `${BASE}_${cam.slug}_${key}`, object_id: `c37_${cam.slug}_${key}`, ...body }));
-  cfg("binary_sensor", "motion", { name: "Bewegung", device_class: "motion", state_topic: `${BASE}/${cam.slug}/motion`, off_delay: 30 });
-  cfg("binary_sensor", "person", { name: "Person", device_class: "occupancy", state_topic: `${BASE}/${cam.slug}/person`, off_delay: 30 });
-  cfg("sensor", "battery", { name: "Akku", device_class: "battery", unit_of_measurement: "%", state_class: "measurement", state_topic: `${BASE}/${cam.slug}/battery`, entity_category: "diagnostic" });
-  cfg("sensor", "image_ts", { name: "Letztes Bild", device_class: "timestamp", state_topic: `${BASE}/${cam.slug}/image_ts` });
-  cfg("sensor", "last_event", { name: "Letztes Ereignis", state_topic: `${BASE}/${cam.slug}/last_event`, icon: "mdi:motion-sensor" });
-  cfg("button", "refresh", { name: "Live-Bild holen", command_topic: `${BASE}/${cam.slug}/refresh`, icon: "mdi:camera-retake" });
-  if (cam.ts) pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
-  if (cam.battery != null) pub(`${BASE}/${cam.slug}/battery`, cam.battery);
+      JSON.stringify({ ...common, unique_id: `${BASE}_${cam.slug}_${key}`, object_id: `${objectPrefix(cam)}_${cam.slug}_${key}`, ...body }));
+  const t = `${BASE}/${cam.slug}`;
+  const has = (c) => cam.caps.includes(c);
+  cfg("binary_sensor", "motion", { name: "Bewegung", device_class: "motion", state_topic: `${t}/motion`, off_delay: 30 });
+  cfg("binary_sensor", "person", { name: "Person", device_class: "occupancy", state_topic: `${t}/person`, off_delay: 30 });
+  // Akku nur bei Akku-Kameras; Kameras mit Netzteil (Innenkameras) melden keinen
+  if (has("battery")) {
+    cfg("sensor", "battery", { name: "Akku", device_class: "battery", unit_of_measurement: "%", state_class: "measurement", state_topic: `${t}/battery`, entity_category: "diagnostic" });
+    cfg("binary_sensor", "charging", { name: "Lädt", device_class: "battery_charging", state_topic: `${t}/charging`, entity_category: "diagnostic" });
+  } else {
+    pub(`homeassistant/sensor/${BASE}_${cam.slug}_battery/config`, "");
+    pub(`homeassistant/binary_sensor/${BASE}_${cam.slug}_charging/config`, "");
+  }
+  cfg("sensor", "image_ts", { name: "Letztes Bild", device_class: "timestamp", state_topic: `${t}/image_ts` });
+  cfg("sensor", "last_event", { name: "Letztes Ereignis", state_topic: `${t}/last_event`, icon: "mdi:motion-sensor" });
+  cfg("image", "event_image", { name: "Ereignisbild", image_topic: `${t}/event_image`, content_type: "image/jpeg" });
+  cfg("sensor", "rssi", { name: "WLAN-Signal", state_topic: `${t}/rssi`, state_class: "measurement", icon: "mdi:wifi", entity_category: "diagnostic" });
+  cfg("button", "refresh", { name: "Live-Bild holen", command_topic: `${t}/refresh`, icon: "mdi:camera-retake" });
+  // Schalter: was die Kamera laut SDK kann. Zustand kommt aus readCameraState, Befehle ueber <slug>/set/<key>
+  for (const [key, sw] of Object.entries(CAMERA_SWITCHES)) {
+    const topic = `homeassistant/switch/${BASE}_${cam.slug}_${key}/config`;
+    if (!sw.available(cam)) { pub(topic, ""); continue; }
+    cfg("switch", key, { name: sw.name, icon: sw.icon, state_topic: `${t}/${key}`, command_topic: `${t}/set/${key}`,
+      entity_category: sw.config ? "config" : undefined });
+  }
+  for (const kind of cam.eventKinds) publishEventSensor(cam, kind);
+  if (cam.ts) pub(`${t}/image_ts`, new Date(cam.ts).toISOString());
+  if (cam.battery != null) pub(`${t}/battery`, cam.battery);
+  cam.values = {}; // nach (Neu-)Verbindung alle Zustaende erneut melden
+}
+
+// Weitere Ereignisse (Haustier, Geraeusch, Weinen, Fahrzeug) bekommen erst einen Sensor, wenn die Kamera
+// so ein Ereignis tatsaechlich einmal meldet – nicht jede Kamera kann alles erkennen.
+const EVENT_SENSORS = {
+  petDetection: { key: "pet", name: "Haustier", icon: "mdi:paw" },
+  soundDetected: { key: "sound", name: "Geräusch", device_class: "sound" },
+  cryingDetected: { key: "crying", name: "Weinen", device_class: "sound", icon: "mdi:emoticon-cry-outline" },
+  vehicleDetected: { key: "vehicle", name: "Fahrzeug", icon: "mdi:car" },
+};
+function publishEventSensor(cam, eventName) {
+  const s = EVENT_SENSORS[eventName];
+  if (!s) return;
+  const key = s.key;
+  pub(`homeassistant/binary_sensor/${BASE}_${cam.slug}_${key}/config`, JSON.stringify({
+    availability_topic: `${BASE}/status`, device: deviceInfo(cam), unique_id: `${BASE}_${cam.slug}_${key}`,
+    object_id: `${objectPrefix(cam)}_${cam.slug}_${key}`, name: s.name, device_class: s.device_class, icon: s.icon,
+    state_topic: `${BASE}/${cam.slug}/${key}`, off_delay: 30,
+  }));
+}
+
+// Schalter je Kamera: Lesen ueber den gepufferten SDK-Wert, Schreiben ueber den SDK-Setter.
+// Licht: "isOn" ist der momentane Zustand der Lampe (geht beim Livestream auch von selbst an).
+const CAMERA_SWITCHES = {
+  enabled: {
+    name: "Kamera eingeschaltet", icon: "mdi:cctv", config: true,
+    available: (cam) => cam.caps.includes("camera"),
+    read: async (dev) => readVal(dev.camera?.(), "enabled"),
+    write: async (dev, on) => { const c = dev.camera?.(); await (on ? c.on() : c.off()); },
+  },
+  motion_detection: {
+    name: "Bewegungserkennung", icon: "mdi:motion-sensor", config: true,
+    available: (cam) => cam.caps.includes("motion"),
+    read: async (dev) => readVal(dev.motion?.(), "detectionEnabled"),
+    write: async (dev, on) => dev.motion?.().setDetection(on),
+  },
+  light: {
+    name: "Licht", icon: "mdi:spotlight-beam",
+    available: (cam) => cam.caps.includes("light"),
+    read: async (dev) => readVal(dev.light?.(), "isOn"),
+    write: async (dev, on) => { const l = dev.light?.(); await (on ? l.on() : l.off()); },
+  },
+};
+
+async function setCameraSwitch(cam, key, payload) {
+  const sw = CAMERA_SWITCHES[key];
+  if (!sw || !sw.available(cam)) throw new Error(`unbekannter Schalter ${key}`);
+  const on = String(payload).toUpperCase() === "ON";
+  const dev = await eufy.getDevice(cam.sn);
+  log(`${cam.name}: ${sw.name} ${on ? "an" : "aus"}`);
+  await withTimeout(sw.write(dev, on), 30_000, sw.name);
+  setTimeout(() => readCameraState(cam).catch(() => {}), 3_000);
+}
+
+// Gepufferte Werte einer Kamera lesen und nur Aenderungen melden (weckt die Kamera nicht)
+async function readCameraState(cam) {
+  if (!cam.sn || cam.liveOnly) return;
+  const dev = await eufy.getDevice(cam.sn);
+  const t = `${BASE}/${cam.slug}`;
+  const report = (key, v) => { if (v !== undefined && v !== null && cam.values[key] !== v) { cam.values[key] = v; pub(`${t}/${key}`, v); } };
+  if (cam.caps.includes("battery")) {
+    const b = dev.battery?.();
+    const level = await readVal(b, "level").catch(() => undefined);
+    if (typeof level === "number" && Number.isFinite(level)) { cam.battery = level; report("battery", level); }
+    const charging = await readVal(b, "charging").catch(() => undefined);
+    if (typeof charging === "boolean") report("charging", charging ? "ON" : "OFF");
+  }
+  const rssi = await readVal(dev.camera?.(), "wifiRssi").catch(() => undefined);
+  if (typeof rssi === "number") report("rssi", rssi);
+  for (const [key, sw] of Object.entries(CAMERA_SWITCHES)) {
+    if (!sw.available(cam)) continue;
+    const v = await sw.read(dev).catch(() => undefined);
+    if (typeof v === "boolean") report(key, v ? "ON" : "OFF");
+  }
 }
 
 // Entitaeten einer Kamera, die es im Konto nicht gibt, wieder aus Home Assistant entfernen
 // (leere, gespeicherte Discovery-Nachricht loescht die Entitaet)
 function unpublishDiscovery(slug) {
   const keys = [["binary_sensor", "motion"], ["binary_sensor", "person"], ["sensor", "battery"], ["sensor", "image_ts"],
-    ["sensor", "last_event"], ["button", "refresh"], ["button", "ptz_left"], ["button", "ptz_right"], ["button", "ptz_up"], ["button", "ptz_down"]];
+    ["sensor", "last_event"], ["button", "refresh"], ["button", "ptz_left"], ["button", "ptz_right"], ["button", "ptz_up"], ["button", "ptz_down"],
+    ["binary_sensor", "charging"], ["image", "event_image"], ["sensor", "rssi"],
+    ...Object.keys(CAMERA_SWITCHES).map((k) => ["switch", k]),
+    ...Object.values(EVENT_SENSORS).map((s) => ["binary_sensor", s.key])];
   for (const [component, key] of keys) pub(`homeassistant/${component}/${BASE}_${slug}_${key}/config`, "");
 }
 
@@ -152,6 +256,7 @@ async function startMqtt() {
     mq.subscribe(`${BASE}/+/refresh`);
     mq.subscribe(`${BASE}/+/ptz`);
     mq.subscribe(`${BASE}/+/alarm/set`);
+    mq.subscribe(`${BASE}/+/set/+`);
     for (const x of state.extras) { publishExtraDiscovery(x); x.values = {}; }
     for (const slug of state.removedExtras) unpublishExtra(slug);
     if (state.extras.length) refreshExtras();
@@ -161,6 +266,12 @@ async function startMqtt() {
     if (am) {
       const x = state.extras.find((d) => d.slug === am[1] && d.kind === "station");
       if (x) setArming(x, String(payload)).catch((e) => log(`${x.name}: Modus setzen fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`));
+      return;
+    }
+    const sm = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/set/([a-z_]+)$`));
+    if (sm) {
+      const cam = state.cameras[sm[1]];
+      if (cam?.sn && !cam.liveOnly) setCameraSwitch(cam, sm[2], payload).catch((e) => log(`${cam.name}: Schalten fehlgeschlagen: ${String(e?.message ?? e).slice(0, 160)}`));
       return;
     }
     const m = topic.match(new RegExp(`^${BASE}/([a-z0-9_]+)/(refresh|ptz)$`));
@@ -182,6 +293,8 @@ function store(cam, jpeg, source) {
   cam.lastError = null;
   try { fs.writeFileSync(cam.file, jpeg); } catch (e) { log("Bild nicht gespeichert:", e.message); }
   pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
+  // Ereignisbild zusaetzlich als MQTT-Bild (Entitaet "Ereignisbild"), z. B. fuer Push-Nachrichten mit Bild
+  if (!cam.liveOnly && source.startsWith("event") && mq?.connected) mq.publish(`${BASE}/${cam.slug}/event_image`, jpeg, { retain: true });
   log(`${cam.name}: neues Bild (${source}, ${jpeg.length} Bytes)`);
 }
 
@@ -264,9 +377,11 @@ async function bindCamera(cam, rec) {
   const dev = await eufy.getDevice(rec.sn);
   cam.caps = Object.keys(CAPABILITY_MODULES || {}).filter((c) => { try { return dev.has?.(c); } catch { return false; } });
   cam.ptz = cam.caps.includes("ptz") && typeof dev.ptz?.()?.rotate === "function";
+  cam.c37 = C37_MODEL.test(rec.model ?? "");
   // Andere Eufy-Kameras (z. B. Tuerklingel) laufen meist schon ueber eufy-security-ws. Fuer sie liefert die Bridge
-  // nur das Livevideo: keine MQTT-Entitaeten, kein regelmaessiges Wecken, keine Ereignisbilder.
-  cam.liveOnly = !C37_MODEL.test(rec.model ?? "");
+  // ohne full_support nur das Livevideo: keine MQTT-Entitaeten, kein regelmaessiges Wecken, keine Ereignisbilder.
+  // Mit full_support bekommen sie dieselben Entitaeten wie die C37, werden aber ebenfalls nie von selbst geweckt.
+  cam.liveOnly = !cam.c37 && !FULL_SUPPORT;
   log(`${cam.name}: verbunden (${rec.model})${cam.liveOnly ? ", nur Livevideo" : ""}, Faehigkeiten: ${cam.caps.join(", ") || "-"}`);
   // Nur-Live-Kameras: keine Sensoren, aber Schwenk-Knoepfe, falls die Kamera schwenken kann
   if (cam.liveOnly) { unpublishDiscovery(cam.slug); publishPtz(cam); return; }
@@ -564,6 +679,13 @@ eufy.on("event", async (e) => {
     pub(`${BASE}/${cam.slug}/last_event`, e.eventName);
     if (e.eventName === "motion" || PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/motion`, "ON", false);
     if (PERSON_EVENTS.has(e.eventName)) pub(`${BASE}/${cam.slug}/person`, "ON", false);
+    const extra = EVENT_SENSORS[e.eventName];
+    if (extra) {
+      const fire = () => pub(`${BASE}/${cam.slug}/${extra.key}`, "ON", false);
+      // Erstes Ereignis dieser Art: Sensor erst anlegen, Home Assistant kurz Zeit geben, ihn zu abonnieren
+      if (!cam.eventKinds.has(e.eventName)) { cam.eventKinds.add(e.eventName); publishEventSensor(cam, e.eventName); setTimeout(fire, 2_000); }
+      else fire();
+    }
   }
   try {
     const dev = await eufy.getDevice(cam.sn);
@@ -682,8 +804,8 @@ const server = http.createServer(async (req, res) => {
   if (m) {
     const cam = state.cameras[m[2]];
     if (!cam) { res.writeHead(404); return res.end("unbekannte Kamera"); }
-    // Nur-Live-Kameras werden fuer Standbilder nie von selbst geweckt
-    const stale = !cam.liveOnly && (!cam.jpeg || (REFRESH_MIN > 0 && Date.now() - cam.ts > REFRESH_MIN * 60_000));
+    // Nur die C37 wird fuer Standbilder von selbst geweckt; alle anderen Kameras nur auf ausdruecklichen Abruf
+    const stale = cam.c37 && (!cam.jpeg || (REFRESH_MIN > 0 && Date.now() - cam.ts > REFRESH_MIN * 60_000));
     if (m[1] === "refresh" || stale) {
       const p = liveSnapshot(cam, m[1] === "refresh");
       if (!cam.jpeg && p) await p; // erstes Bild abwarten
@@ -721,9 +843,17 @@ server.listen(PORT, () => log(`HTTP auf Port ${PORT}`));
 // Regelmaessige Aktualisierung, nacheinander, damit nicht alle Kameras gleichzeitig wach sind
 async function refreshAll() {
   for (const cam of Object.values(state.cameras)) {
-    if (!cam.sn || cam.liveOnly) continue;
+    if (!cam.sn || !cam.c37) continue;
     await liveSnapshot(cam);
     await readBattery(cam);
+  }
+}
+
+// Zustaende (Akku, Signal, Schalter) aller voll eingebundenen Kameras; liest nur gepufferte Werte
+async function readAllCameraStates() {
+  for (const cam of Object.values(state.cameras)) {
+    try { await readCameraState(cam); }
+    catch (e) { log(`${cam.name}: Zustand nicht lesbar (${String(e?.message ?? e).slice(0, 120)})`); }
   }
 }
 
@@ -737,6 +867,8 @@ try {
       await refreshExtras();
       setInterval(() => refreshExtras().catch(() => {}), 30_000);
     }
+    await readAllCameraStates();
+    setInterval(() => readAllCameraStates().catch(() => {}), STATE_POLL_MS);
     await refreshAll();
     if (REFRESH_MIN > 0) setInterval(() => refreshAll().catch((e) => log("Aktualisierung:", e.message)), REFRESH_MIN * 60_000);
   }
