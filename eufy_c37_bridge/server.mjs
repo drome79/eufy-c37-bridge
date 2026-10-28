@@ -460,6 +460,31 @@ function stopLive(cam, reason) {
   log(`${cam.name}: Livestream beendet (${reason})${stats}`);
 }
 
+// --- Diagnose: Mitschnitt der ersten Bilder jedes Livestreams ---------------------------------------
+// Je Kamera wird der letzte Start festgehalten: Zeitpunkt, Codec-Angabe, Schluesselbild-Flag, Groesse und NAL-Typen
+// der ersten DIAG_FRAMES Bilder, ffmpeg-Start, erste ffmpeg-Ausgabe und ffmpeg-Meldungen. Abruf: /diag/<name>
+// (JSON) und /diag/<name>.<h264|h265> (die rohen Bilder dieses Codecs). Nur im Speicher, wird beim naechsten Start ersetzt.
+const DIAG_FRAMES = 120;
+function nalTypes(buf, codec) {
+  const types = [];
+  for (let i = 0; i + 4 < buf.length && types.length < 12; i++) {
+    if (buf[i] === 0 && buf[i + 1] === 0 && (buf[i + 2] === 1 || (buf[i + 2] === 0 && buf[i + 3] === 1))) {
+      const h = buf[i + 2] === 1 ? i + 3 : i + 4;
+      types.push(codec === "h265" ? (buf[h] >> 1) & 0x3f : buf[h] & 0x1f);
+      i = h;
+    }
+  }
+  return types;
+}
+function diagFrame(s, frame) {
+  const d = s.diag;
+  if (!d || d.frames.length >= DIAG_FRAMES) return;
+  d.frames.push({ ms: Date.now() - d.t0, codec: frame.codec, keyframe: frame.keyframe, bytes: frame.data.length,
+    width: frame.width, height: frame.height, nal: nalTypes(frame.data, frame.codec), nal_als_h264: nalTypes(frame.data, "h264"),
+    an_ffmpeg: Boolean(s.ff) && frame.codec === s.codec });
+  (d.raw[frame.codec] ??= []).push(frame.data);
+}
+
 function startFfmpeg(cam, s, codec) {
   // H.264 wird unveraendert durchgereicht. H.265 (z. B. T814XS) koennen Browser per WebRTC nicht abspielen,
   // deshalb wird es nach H.264 umgewandelt (verkleinert auf transcode_height, Standard 1080).
@@ -468,7 +493,7 @@ function startFfmpeg(cam, s, codec) {
     : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
        "-vf", `scale=-2:${Number(opts.transcode_height || 1080)}`, "-g", "30", "-bf", "0"];
   const args = [
-    "-hide_banner", "-loglevel", "error",
+    "-hide_banner", "-loglevel", "warning",
     "-fflags", "+genpts+nobuffer", "-use_wallclock_as_timestamps", "1",
     // Kurz analysieren: Groesse und Codec stehen im ersten Schluesselbild. Mit den Standardwerten wartete ffmpeg
     // bei niedriger Datenrate (Tuerklingel nachts ~120 kbit/s) gut 4 s, bevor es etwas ausgab.
@@ -481,8 +506,16 @@ function startFfmpeg(cam, s, codec) {
   ];
   const ff = spawn(opts.ffmpeg_path || "ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
   ff.stdin.on("error", () => {});
-  ff.stdout.on("data", (chunk) => { for (const res of s.clients) res.write(chunk); });
-  ff.stderr.on("data", (d) => log(`${cam.name} [ffmpeg] ${String(d).trim().slice(0, 200)}`));
+  if (s.diag) s.diag.ffmpeg.push({ ms: Date.now() - s.diag.t0, codec });
+  ff.stdout.on("data", (chunk) => {
+    if (s.diag && s.diag.ersteAusgabeMs == null) s.diag.ersteAusgabeMs = Date.now() - s.diag.t0;
+    for (const res of s.clients) res.write(chunk);
+  });
+  ff.stderr.on("data", (d) => {
+    const msg = String(d).trim().slice(0, 300);
+    if (s.diag && s.diag.meldungen.length < 40) s.diag.meldungen.push({ ms: Date.now() - s.diag.t0, msg });
+    if (/error/i.test(msg)) log(`${cam.name} [ffmpeg] ${msg.slice(0, 200)}`);
+  });
   ff.on("exit", () => { if (cam.live === s) stopLive(cam, "ffmpeg beendet"); });
   s.ff = ff;
   s.codec = codec;
@@ -491,6 +524,8 @@ function startFfmpeg(cam, s, codec) {
 async function ensureLive(cam) {
   if (cam.live) return cam.live;
   const s = { clients: new Set(), consumer: null, ff: null, codec: null, idleTimer: null, maxTimer: null, startedAt: Date.now() };
+  s.diag = { t0: s.startedAt, start: new Date(s.startedAt).toISOString(), frames: [], raw: {}, ffmpeg: [], ersteAusgabeMs: null, meldungen: [] };
+  cam.diag = s.diag;
   cam.live = s;
   try {
     const dev = await eufy.getDevice(cam.sn);
@@ -508,6 +543,7 @@ async function ensureLive(cam) {
     const firstFrame = new Promise((resolve, reject) => {
       consumer.on("video", (frame) => {
         if (cam.live !== s) return;
+        diagFrame(s, frame);
         const st = (s.stats[frame.codec] ??= { bilder: 0, schluesselbilder: 0 });
         st.bilder++;
         if (frame.keyframe) st.schluesselbilder++;
@@ -860,6 +896,15 @@ const server = http.createServer(async (req, res) => {
     if (!fromIngress) { res.writeHead(403); return res.end("nur ueber die Home-Assistant-Oberflaeche"); }
     try { return await saveSelection(req, res); }
     catch (e) { res.writeHead(500); return res.end(String(e?.message ?? e)); }
+  }
+  const dm = url.pathname.match(/^\/diag\/([a-z0-9_]+)(?:\.(h264|h265))?$/);
+  if (dm) {
+    const d = state.cameras[dm[1]]?.diag;
+    if (!d) { res.writeHead(404); return res.end("noch kein Livestream seit dem Start der Bridge"); }
+    if (dm[2]) { res.writeHead(200, { "content-type": "application/octet-stream" }); return res.end(Buffer.concat(d.raw[dm[2]] ?? [])); }
+    const { raw, t0, ...rest } = d;
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ ...rest, roh_bytes: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.reduce((n, b) => n + b.length, 0)])) }, null, 1));
   }
   const pm = url.pathname.match(/^\/ptz\/([a-z0-9_]+)\/(left|right|up|down)$/);
   if (pm) {

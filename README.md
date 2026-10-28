@@ -8,7 +8,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.13.0 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.13.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -140,6 +140,7 @@ gelten, zeigen die Statusseite und das Protokoll des Add-ons nach dem Start.
 | `http://<HA-IP>:8099/snapshot/<name>.jpg` | letztes Bild |
 | `http://<HA-IP>:8099/refresh/<name>` | frisches Bild erzwingen (weckt die Kamera) |
 | `http://<HA-IP>:8099/live/<name>.ts` | Livevideo (MPEG-TS) |
+| `http://<HA-IP>:8099/diag/<name>` | Diagnose: Ablauf des letzten Livestream-Starts (erste Bilder mit Codec, Schlüsselbild, NAL-Typen; ffmpeg-Start und erste Ausgabe) |
 | `http://<HA-IP>:8099/captcha.png` | Captcha-Bild, falls Eufy eines verlangt |
 
 ### Kamera in Home Assistant einrichten
