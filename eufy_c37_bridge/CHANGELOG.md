@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.2
+- **Behoben:** Türsensoren (T8900) zeigten einen falschen Akkustand (31 % bzw. 0 % bei vollem Akku). Der Sensor meldet
+  keinen Prozentwert; das SDK liest dort param 1101, der beim T8900 nichts bedeutet. Statt „Akku“ (%) gibt es jetzt
+  **„Akku schwach“** (an/aus): an bei Eufys Warnung „Akku schwach“, aus bei „Akku voll“ (Push `batteryAlert`).
+  Der letzte Stand bleibt über Neustarts erhalten (`/data/battery_low.json`). Der alte Prozent-Sensor wird entfernt.
+
 ## 0.13.1
 - **Diagnose für langsame Livestarts:** `/diag/<name>` zeigt den Ablauf des letzten Livestream-Starts einer Kamera (die ersten
   120 Bilder mit Zeitpunkt, Codec, Schlüsselbild, Größe und NAL-Typen, ffmpeg-Start, erste Ausgabe, ffmpeg-Warnungen);

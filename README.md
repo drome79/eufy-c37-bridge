@@ -8,7 +8,7 @@ Add-on-Repository für Home Assistant OS. Enthält derzeit ein Add-on:
 
 | Add-on | Version | Zweck |
 |---|---|---|
-| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.13.1 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
+| [Eufy C37 Bridge](eufy_c37_bridge/) | 0.13.2 | Bindet die **eufyCam C37** (T814X / T814XS) in Home Assistant ein: Bilder, Livevideo, Bewegung, Akku |
 
 ## Voraussetzungen
 
@@ -81,7 +81,7 @@ Home Assistant über einfache HTTP-Adressen und MQTT bereit.
   und ein Bild aus dem letzten Livestream vor. Kann die Kamera schwenken (z. B. Innenkamera T8410), bekommt sie
   die Knöpfe „Schwenken links/rechts/hoch/runter“ (Gerät „Eufy <Name>“).
 - **Weitere Eufy-Geräte** (wenn ihr Name unter `cameras` eingetragen ist), per MQTT:
-  HomeBase als **Alarmpanel** (Zuhause, Abwesend, Bypass = Custom 1, Deaktiviert), **Türsensoren** (offen/zu, Akku) und die
+  HomeBase als **Alarmpanel** (Zuhause, Abwesend, Bypass = Custom 1, Deaktiviert), **Türsensoren** (offen/zu, Akku schwach) und die
   **Türklingel** (Klingeln, Ereignisbild) und das **Keypad** (lädt, Signal). Eine Sirene wird bewusst nicht angeboten.
 - **Alle Kameras voll einbinden** (Option `full_support`, ab 0.11.0): Jede ausgewählte Kamera bekommt die MQTT-Entitäten
   der C37, dazu – sofern die Kamera es laut SDK kann – die Schalter **Kamera eingeschaltet**, **Bewegungserkennung** und
@@ -105,7 +105,7 @@ Bisher im echten Betrieb gesehen:
 | Video Doorbell (Akku) | T8213 | Livevideo, Klingeln, Ereignisbild; mit `full_support` zusätzlich Bewegung, Person, Akku, Schalter | Livevideo und Klingeln getestet |
 | Indoor Cam Pan & Tilt | T8410 | Livevideo, Schwenken links/rechts/hoch/runter; mit `full_support` zusätzlich Bewegung, Person, Schalter | getestet (am Netzteil und an der HomeBase) |
 | HomeBase 3 | T8030 | Alarmpanel Zuhause / Abwesend / Bypass (Custom 1) / Deaktiviert, Sensor „Modus (Eufy)“ | getestet |
-| Türsensor (Entry Sensor) | T8900 | Tür offen/zu, Akku | getestet |
+| Türsensor (Entry Sensor) | T8900 | Tür offen/zu, Akku schwach (Eufy-Warnung) | getestet |
 | Keypad | T8960 | Lädt, Funksignal | getestet |
 | weitere Akku-Kameras | T8140-Z, T8142-R | als Kamera erkannt, Livevideo; mit `full_support` Sensoren und Schalter | erkannt, Funktionen noch nicht bestätigt |
 
