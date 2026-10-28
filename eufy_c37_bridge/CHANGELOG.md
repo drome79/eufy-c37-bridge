@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.1
+- **Diagnose für langsame Livestarts:** `/diag/<name>` zeigt den Ablauf des letzten Livestream-Starts einer Kamera (die ersten
+  120 Bilder mit Zeitpunkt, Codec, Schlüsselbild, Größe und NAL-Typen, ffmpeg-Start, erste Ausgabe, ffmpeg-Warnungen);
+  `/diag/<name>.h264` bzw. `.h265` liefert die rohen Bilder. Nur im Speicher.
+- ffmpeg meldet jetzt auch Warnungen (nur in der Diagnose; ins Protokoll kommen weiterhin nur Fehler).
+
 ## 0.13.0
 - **Neu:** Das Alarmpanel der HomeBase kann auch **Bypass**. Bypass schaltet auf den Eufy-Modus **Custom 1**
   (das SDK bestätigt diesen Modus für `setMode`). Angezeigt wurden Custom 1–3, Zeitplan und Geofencing schon vorher als Bypass.
