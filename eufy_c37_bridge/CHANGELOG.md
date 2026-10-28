@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.2
+- **Türklingel startet wieder mit H.265 in voller Auflösung.** Der Diagnose-Mitschnitt zeigte: Die Klingel liefert zuerst einen
+  einwandfreien H.265-Strom (1600×2300) und regelt bei Live-Qualität „Auto“ nach ~2 s auf H.264 mit kleiner Auflösung herunter.
+  Der gemerkte Codec aus 0.12.4 ließ die Bridge auf das kleine H.264 warten – das kostete Zeit und Bildqualität. Er entfällt.
+  **Empfehlung:** In der Eufy-App die Live-Qualität der Klingel auf einen festen Wert statt „Auto“ stellen.
+- Bleibt „Auto“ eingestellt, stellt die Bridge wie bisher beim Wechsel einmalig um (jetzt bis 5 s nach dem Start).
+
 ## 0.13.1
 - **Diagnose für langsame Livestarts:** `/diag/<name>` zeigt den Ablauf des letzten Livestream-Starts einer Kamera (die ersten
   120 Bilder mit Zeitpunkt, Codec, Schlüsselbild, Größe und NAL-Typen, ffmpeg-Start, erste Ausgabe, ffmpeg-Warnungen);
