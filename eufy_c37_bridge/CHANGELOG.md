@@ -1,10 +1,18 @@
 # Changelog
 
-## 0.13.2
+## 0.13.3
 - **Behoben:** Türsensoren (T8900) zeigten einen falschen Akkustand (31 % bzw. 0 % bei vollem Akku). Der Sensor meldet
   keinen Prozentwert; das SDK liest dort param 1101, der beim T8900 nichts bedeutet. Statt „Akku“ (%) gibt es jetzt
   **„Akku schwach“** (an/aus): an bei Eufys Warnung „Akku schwach“, aus bei „Akku voll“ (Push `batteryAlert`).
   Der letzte Stand bleibt über Neustarts erhalten (`/data/battery_low.json`). Der alte Prozent-Sensor wird entfernt.
+
+## 0.13.2
+- **Türklingel startet wieder mit H.265 in voller Auflösung.** Der Diagnose-Mitschnitt zeigte: Die Klingel liefert zuerst einen
+  einwandfreien H.265-Strom (1600×2300) und schaltet bei Videoqualität „Niedrig“ (oder „Auto“) nach ~2 s auf H.264 mit kleiner
+  Auflösung um.
+  Der gemerkte Codec aus 0.12.4 ließ die Bridge auf das kleine H.264 warten – das kostete Zeit und Bildqualität. Er entfällt.
+  **Empfehlung:** In der Eufy-App die Videoqualität der Klingel auf „Hoch“ stellen.
+- Bleibt „Niedrig“ oder „Auto“ eingestellt, stellt die Bridge wie bisher beim Wechsel einmalig um (jetzt bis 5 s nach dem Start).
 
 ## 0.13.1
 - **Diagnose für langsame Livestarts:** `/diag/<name>` zeigt den Ablauf des letzten Livestream-Starts einer Kamera (die ersten
