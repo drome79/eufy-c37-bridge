@@ -22,8 +22,8 @@ const LIVE_TIMEOUT_MS = 75_000;
 const LIVE_MAX_MIN = Number(opts.live_max_minutes ?? 5); // Akku: laengster Livestream am Stueck
 const LIVE_IDLE_MS = 20_000; // so lange nach dem letzten Zuschauer weiterlaufen lassen
 const LIVE_START_TIMEOUT_MS = 45_000;
-// Gemerkter Codec (0.12.4–0.13.1) entfaellt: Die Tuerklingel startet in Wahrheit mit einem guten H.265-Strom und regelt bei
-// Live-Qualitaet "Auto" nach ~2 s auf H.264 mit kleiner Aufloesung herunter. Auf H.264 zu warten kostete Zeit und Bildqualitaet.
+// Gemerkter Codec (0.12.4–0.13.1) entfaellt: Die Tuerklingel startet in Wahrheit mit einem guten H.265-Strom und schaltet
+// bei Videoqualitaet "Niedrig" (oder "Auto") in der Eufy-App nach ~2 s auf H.264 mit kleiner Aufloesung um. Auf H.264 zu warten kostete Zeit und Bildqualitaet.
 try { fs.unlinkSync(path.join(DATA, "codecs.json")); } catch {}
 const CODEC_SWITCH_MS = 5_000; // so lange nach dem Start darf ein Schluesselbild mit anderem Codec noch umstellen
 const BASE = "eufy_c37";
@@ -555,7 +555,7 @@ async function ensureLive(cam) {
         if (frame.codec !== s.codec) {
           if (frame.keyframe && !s.codecSwitched && Date.now() - s.ffStartedAt < CODEC_SWITCH_MS) {
             s.codecSwitched = true;
-            log(`${cam.name}: Schluesselbild mit ${frame.codec} – stelle von ${s.codec} um (Live-Qualitaet "Auto"?)`);
+            log(`${cam.name}: Schluesselbild mit ${frame.codec} – stelle von ${s.codec} um (Videoqualitaet in der Eufy-App "Niedrig"/"Auto"?)`);
             const old = s.ff;
             old.removeAllListeners("exit");
             try { old.stdin.end(); old.kill("SIGKILL"); } catch {}
