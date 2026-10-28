@@ -25,6 +25,15 @@ const LIVE_START_TIMEOUT_MS = 45_000;
 // Gemerkter Codec (0.12.4–0.13.1) entfaellt: Die Tuerklingel startet in Wahrheit mit einem guten H.265-Strom und schaltet
 // bei Videoqualitaet "Niedrig" (oder "Auto") in der Eufy-App nach ~2 s auf H.264 mit kleiner Aufloesung um. Auf H.264 zu warten kostete Zeit und Bildqualitaet.
 try { fs.unlinkSync(path.join(DATA, "codecs.json")); } catch {}
+// Tuersensoren (T8900) melden keinen Akkustand in Prozent, nur Eufys Warnung "Akku schwach"/"Akku voll" per Push.
+// Den letzten Stand ueber Neustarts hinweg merken.
+const BATTERY_LOW_FILE = path.join(DATA, "battery_low.json");
+const batteryLow = (() => { try { return JSON.parse(fs.readFileSync(BATTERY_LOW_FILE, "utf8")); } catch { return {}; } })();
+function rememberBatteryLow(slug, low) {
+  if (batteryLow[slug] === low) return;
+  batteryLow[slug] = low;
+  try { fs.writeFileSync(BATTERY_LOW_FILE, JSON.stringify(batteryLow)); } catch {}
+}
 const CODEC_SWITCH_MS = 5_000; // so lange nach dem Start darf ein Schluesselbild mit anderem Codec noch umstellen
 const BASE = "eufy_c37";
 // Ab 0.11.0: alle Eufy-Kameras voll einbinden (MQTT-Entitaeten wie bei der C37), statt nur Livevideo.
@@ -641,7 +650,7 @@ const ARMING_CMD = { ARM_HOME: "home", ARM_AWAY: "away", ARM_CUSTOM_BYPASS: "cus
 // Entitaeten eines nicht (mehr) ausgewaehlten weiteren Geraets aus Home Assistant entfernen
 function unpublishExtra(slug) {
   const keys = [["alarm_control_panel", "alarm"], ["sensor", "mode"], ["binary_sensor", "contact"], ["sensor", "battery"],
-    ["binary_sensor", "ring"], ["image", "event_image"], ["binary_sensor", "charging"], ["sensor", "rssi"]];
+    ["binary_sensor", "battery_low"], ["binary_sensor", "ring"], ["image", "event_image"], ["binary_sensor", "charging"], ["sensor", "rssi"]];
   for (const [component, key] of keys) pub(`homeassistant/${component}/${BASE}_${slug}_${key}/config`, "");
   if (!state.removedExtras.includes(slug)) state.removedExtras.push(slug);
 }
@@ -676,7 +685,10 @@ function publishExtraDiscovery(x) {
   }
   if (x.kind === "contact") {
     cfg("binary_sensor", "contact", { name: "Tür", device_class: "door", state_topic: `${t}/contact` });
-    cfg("sensor", "battery", { name: "Akku", device_class: "battery", unit_of_measurement: "%", state_class: "measurement", state_topic: `${t}/battery`, entity_category: "diagnostic" });
+    // Kein Akku in Prozent: der Wert (param 1101) bedeutet beim T8900 nichts (zeigte 31 bzw. 0 bei vollem Akku)
+    pub(`homeassistant/sensor/${BASE}_${x.slug}_battery/config`, "");
+    cfg("binary_sensor", "battery_low", { name: "Akku schwach", device_class: "battery", state_topic: `${t}/battery_low`, entity_category: "diagnostic" });
+    pub(`${t}/battery_low`, batteryLow[x.slug] ? "ON" : "OFF");
   }
   if (x.kind === "doorbell") {
     cfg("binary_sensor", "ring", { name: "Klingeln", icon: "mdi:doorbell", state_topic: `${t}/ring`, off_delay: 30 });
@@ -704,8 +716,6 @@ async function refreshExtra(x) {
     if (x.kind === "contact") {
       const open = await readVal(dev.contact?.(), "open");
       if (typeof open === "boolean" && open !== x.values.open) { x.values.open = open; pub(`${t}/contact`, open ? "ON" : "OFF"); }
-      const bat = await readVal(dev.battery?.(), "level");
-      if (typeof bat === "number" && bat !== x.values.battery) { x.values.battery = bat; pub(`${t}/battery`, bat); }
     }
     if (x.kind === "keypad") {
       const kp = dev.keypad?.();
@@ -737,6 +747,13 @@ eufy.on("event", async (e) => {
   const x = state.extras.find((d) => d.sn === e?.deviceSn);
   if (!x) return;
   x.values.lastEvent = { name: e.eventName, at: new Date().toISOString() };
+  // Eufys Akku-Warnung (Push): "low" = schwach, "full" = wieder voll
+  if (x.kind === "contact" && e.eventName === "batteryAlert" && (e.state === "low" || e.state === "full")) {
+    const low = e.state === "low";
+    rememberBatteryLow(x.slug, low);
+    pub(`${BASE}/${x.slug}/battery_low`, low ? "ON" : "OFF");
+    log(`${x.name}: Akku ${low ? "schwach" : "voll"} (Eufy-Meldung)`);
+  }
   if (x.kind === "doorbell" && e.eventName === "doorbellPress") {
     pub(`${BASE}/${x.slug}/ring`, "ON", false);
     const bellCam = Object.values(state.cameras).find((c) => c.sn === x.sn);
