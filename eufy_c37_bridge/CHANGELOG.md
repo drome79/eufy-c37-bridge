@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0
+- **Neu:** Das Alarmpanel der HomeBase kann auch **Bypass**. Bypass schaltet auf den Eufy-Modus **Custom 1**
+  (das SDK bestätigt diesen Modus für `setMode`). Angezeigt wurden Custom 1–3, Zeitplan und Geofencing schon vorher als Bypass.
+
 ## 0.12.5
 - **Schnellerer Livestart bei niedriger Datenrate:** ffmpeg gibt jedes Paket sofort aus (`-flush_packets 1 -muxdelay 0`).
   Vorher sammelte es ~32 KB, bevor das erste Bild herauskam – bei der Türklingel nachts (~15 KB/s) 3–5 s.
