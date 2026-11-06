@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.4
+- **Behoben:** Die Entität „Ereignisbild“ blieb bei Bewegung und Personen leer. Das SDK lädt das Push-Bild im Hintergrund, die
+  Bridge fragte aber nur einmal direkt nach dem Ereignis nach. Sie fragt jetzt bis zu 30 s lang nach, ohne die Kamera zu wecken.
+  Liefert das SDK noch das Bild des vorigen Ereignisses, wird es nicht erneut gemeldet.
+- Kommt kein neues Bild an, steht der Grund im Log (`pending`, `not-observed`, `download-failed`, `invalid-image` oder `kein neues Bild`).
+
 ## 0.13.3
 - **Behoben:** Türsensoren (T8900) zeigten einen falschen Akkustand (31 % bzw. 0 % bei vollem Akku). Der Sensor meldet
   keinen Prozentwert; das SDK liest dort param 1101, der beim T8900 nichts bedeutet. Statt „Akku“ (%) gibt es jetzt

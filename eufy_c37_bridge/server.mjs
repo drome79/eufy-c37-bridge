@@ -309,6 +309,7 @@ function store(cam, jpeg, source) {
   cam.ts = Date.now();
   cam.source = source;
   cam.lastError = null;
+  if (source.startsWith("event")) cam.lastEventImage = jpeg;
   try { fs.writeFileSync(cam.file, jpeg); } catch (e) { log("Bild nicht gespeichert:", e.message); }
   pub(`${BASE}/${cam.slug}/image_ts`, new Date(cam.ts).toISOString());
   // Ereignisbild zusaetzlich als MQTT-Bild (Entitaet "Ereignisbild"), z. B. fuer Push-Nachrichten mit Bild
@@ -788,6 +789,8 @@ eufy.on("event", async (e) => {
 // Ereignisse (Bewegung, Person ...): an MQTT melden und das Ereignisbild aus dem Push uebernehmen,
 // ohne die Kamera zu wecken
 const PERSON_EVENTS = new Set(["personDetected", "strangerDetected"]);
+const EVENT_IMAGE_WAIT_MS = 30_000;
+const EVENT_IMAGE_POLL_MS = 2_500;
 eufy.on("event", async (e) => {
   const cam = Object.values(state.cameras).find((c) => c.sn && c.sn === e?.deviceSn);
   if (!cam) return;
@@ -806,17 +809,37 @@ eufy.on("event", async (e) => {
       else fire();
     }
   }
+  awaitEventImage(cam, e.eventName);
+});
+
+// Das SDK laedt das Push-Bild im Hintergrund und snapshotStored() wartet nicht darauf: direkt nach dem
+// Ereignis meldet es "pending" oder liefert noch das Bild des vorigen Ereignisses. Daher nachfragen, bis
+// ein neues Bild da ist. Weitere Ereignisse verlaengern nur die laufende Wartezeit.
+async function awaitEventImage(cam, eventName) {
+  cam.eventImageDeadline = Date.now() + EVENT_IMAGE_WAIT_MS;
+  cam.eventImageName = eventName;
+  if (cam.eventImageWaiting) return;
+  cam.eventImageWaiting = true;
+  let reason = "unbekannt";
   try {
-    const dev = await eufy.getDevice(cam.sn);
-    const fn = dev.camera?.()?.snapshotStored;
-    if (typeof fn === "function") {
-      const buf = await withTimeout(fn(), 20_000, "Ereignisbild");
-      if (buf?.length) store(cam, buf, `event:${e.eventName}`);
+    const dev = await withTimeout(eufy.getDevice(cam.sn), 20_000, "Ereignisbild");
+    const camera = dev.camera?.();
+    if (typeof camera?.snapshotStored !== "function") return;
+    while (Date.now() < cam.eventImageDeadline) {
+      await new Promise((r) => setTimeout(r, EVENT_IMAGE_POLL_MS));
+      try {
+        const buf = await camera.snapshotStored();
+        if (buf?.length && !cam.lastEventImage?.equals(buf)) { store(cam, buf, `event:${cam.eventImageName}`); return; }
+        reason = "kein neues Bild";
+      } catch (err) { reason = err?.reason ?? String(err?.message ?? err).slice(0, 120); }
     }
+    log(`${cam.name}: Ereignisbild nicht verfuegbar (${cam.eventImageName}: ${reason})`);
   } catch (err) {
     log(`${cam.name}: Ereignisbild nicht verfuegbar (${String(err?.message ?? err).slice(0, 120)})`);
+  } finally {
+    cam.eventImageWaiting = false;
   }
-});
+}
 
 // --- Geraeteauswahl (Ingress-Seite) -------------------------------------------------------------
 // Zeigt alle Geraete des Eufy-Kontos zum Anhaken und schreibt die Auswahl ueber die Supervisor-API
